@@ -15,11 +15,11 @@ En la asignatura de Sistemas en Tiempo Real es fundamental justificar por qué l
 4. **Aislamiento físico por núcleos (*Core Pinning* SMP en ESP32-S3):** mediante `xTaskCreatePinnedToCore()`, el Gateway ESP32-S3 confina las pilas asíncronas de radio (**BLE Mesh + Wi-Fi + LwIP + `esp_coex`**) al **Core 0**, aislando el **Core 1** para la máquina de estados global, la cola prioritaria de alertas y las transacciones bloqueantes TLS/HTTPS con Telegram.
 5. **Determinismo de periféricos críticos y coexistencia probada:**
    - En el Nodo 3, el **DHT11** exige pulsos del orden de **20–80 µs**. Usar *bit-banging* por CPU deshabilitando interrupciones destruye el determinismo de FreeRTOS y afecta la pila BLE Mesh; en ESP-IDF se utiliza el **periférico hardware RMT**, que captura los flancos por DMA/memoria dedicada sin bloquear la CPU ni alterar el planificador.
-   - En el ESP32-S3, la coexistencia **Wi-Fi + BLE Mesh** depende directamente del árbitro de hardware/software `esp_coex` y del soporte maduro de **Octal PSRAM (`N16R8`)**, ambos integrados y validados nativamente por Espressif en ESP-IDF v5.x.
+   - En el ESP32-S3, la coexistencia **Wi-Fi + BLE Mesh** depende directamente del árbitro de hardware/software `esp_coex` y del soporte maduro de **Octal PSRAM (`N16R8`)**, ambos integrados y validados nativamente por Espressif en ESP-IDF v6.1.1.
 
 ### Comparativa objetiva FreeRTOS (ESP-IDF) vs. Zephyr RTOS
 
-| Criterio STR / Ingeniería | FreeRTOS (ESP-IDF v5.x puro) | Zephyr RTOS |
+| Criterio STR / Ingeniería | FreeRTOS (ESP-IDF v6.1.1 puro) | Zephyr RTOS |
 | :--- | :--- | :--- |
 | **Determinismo de radio dual (BLE Mesh + Wi-Fi)** | **Óptimo:** árbitro oficial `esp_coex` sintonizado por el fabricante del silicio. | **Riesgo alto:** soporte BLE + Wi-Fi simultáneo en ESP32-S3 aún requiere ajustes complejos sobre blobs binarios. |
 | **Periféricos críticos (RMT + Octal PSRAM + TWDT)** | **Nativo:** APIs estables de RMT, SPI DMA, PSRAM Octal y Task Watchdog por tarea. | Requiere escribir y depurar *Devicetree overlays* y drivers no siempre completos para C6/S3. |

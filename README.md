@@ -71,9 +71,9 @@ En el ecosistema Espressif, el esquema **ESP32-C6 (RCP) + ESP32-S3 (Border Route
 
 ## 3. Justificación del Stack: ESP-IDF puro vs. Zephyr
 
-Se confirma **ESP-IDF puro (v5.x) + FreeRTOS** frente a Zephyr RTOS por razones de riesgo técnico y rigor en Sistemas en Tiempo Real:
+Se confirma **ESP-IDF puro (v6.1.1) + FreeRTOS** frente a Zephyr RTOS por razones de riesgo técnico y rigor en Sistemas en Tiempo Real:
 
-| Criterio | ESP-IDF puro (v5.x + FreeRTOS) | Zephyr RTOS |
+| Criterio | ESP-IDF puro (v6.1.1 + FreeRTOS) | Zephyr RTOS |
 | :--- | :--- | :--- |
 | **Coexistencia Wi-Fi + BLE Mesh** | Soporte oficial maduro (`esp_ble_mesh` + árbitro `esp_coex` validado en ESP32-S3). | Alta fricción para Wi-Fi + BLE simultáneos sobre blobs binarios de Espressif. |
 | **Periféricos clave (RMT, Octal PSRAM, TWDT)** | Drivers nativos listos para RMT (DHT11 no bloqueante en C6) y PSRAM Octal (`R8`) en S3. | Configuraciones complejas de *Devicetree overlays* y soporte desigual de periféricos propios. |
@@ -110,10 +110,12 @@ Se confirma **ESP-IDF puro (v5.x) + FreeRTOS** frente a Zephyr RTOS por razones 
 
 ---
 
-## 6. Documentación Técnica de Fase 1 (`docs/`)
+## 6. Documentación Técnica y Replicación (`docs/` y `REQUIREMENTS.md`)
 
-Las especificaciones detalladas de arquitectura, pinout, protocolo binario, lógica funcional y análisis RTOS se encuentran en:
+Las especificaciones detalladas de arquitectura, pinout, protocolo binario, lógica funcional, entorno de desarrollo y requerimientos se encuentran en:
 
+- [**Requerimientos y Guía de Replicación (`REQUIREMENTS.md`)**](REQUIREMENTS.md) — Requisitos agnósticos de software (Linux/Windows/macOS), BOM completo con alternativas de hardware y niveles de replicación sin depender de placas físicas.
+- [**Entorno de Desarrollo en Linux (`ESP-IDF v6.1.1`)**](docs/entorno_desarrollo.md) — Instalación reproducible en Fedora 45 con Python 3.13 aislado, verificación agnóstica de permisos seriales/`udev` y flujo diario por terminal.
 - [**Pinout y Especificaciones de Hardware**](docs/hardware/pinout.md) — Mapeo GPIO de las 4 placas (`2× C6-DevKitC-1`, `C6 SuperMini`, `S3 N16R8 UNO`), restricciones de pines, alimentación y código RGB de estado.
 - [**Protocolo BLE Mesh y Vendor Model**](docs/diagramas/protocolo_ble_mesh.md) — Device UUID, aprovisionamiento automático PB-ADV, direcciones Unicast/Grupos, opcodes y payloads byte a byte, ACKs y modo `/mesh demo_hop`.
 - [**Máquinas de Estados (FSM) y Bot de Telegram**](docs/diagramas/fsm_y_telegram.md) — Transiciones de alarma tipo carro, toggle de cerradura, gestión NVS `/rfid`, escalones PWM/histéresis, diseño del `/panel` *Inline Keyboard* y failover Wi-Fi.
@@ -126,8 +128,10 @@ Las especificaciones detalladas de arquitectura, pinout, protocolo binario, lóg
 ```text
 Proyecto-IoT-RTS/
 ├── README.md                                 # Visión integral, decisiones y roadmap
+├── REQUIREMENTS.md                           # Requerimientos multiplataforma, BOM y equivalencias
 ├── .gitignore                                # Exclusiones ESP-IDF, build/, sdkconfig y secrets.h
 ├── docs/
+│   ├── entorno_desarrollo.md                 # Entorno ESP-IDF v6.1.1 en Linux, permisos y flujo CLI
 │   ├── diagramas/
 │   │   ├── protocolo_ble_mesh.md             # Contrato Vendor Model, PB-ADV y demo_hop
 │   │   └── fsm_y_telegram.md                 # FSM alarma/cerradura/clima y UI Telegram
