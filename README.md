@@ -2,7 +2,7 @@
 
 Proyecto académico integrador diseñado para cumplir simultáneamente los requerimientos técnicos de las asignaturas **Desarrollo de Sistemas IoT** y **Sistemas en Tiempo Real (STR)**.
 
-El sistema implementa una red mallada inalámbrica basada en **Bluetooth Low Energy Mesh (BLE Mesh)** sobre **3 nodos ESP32-C6** y **1 nodo central ESP32-S3 N16R8 (formato UNO)** que actúa como **Provisioner BLE Mesh, Gateway y Border Router Wi-Fi** hacia Internet mediante un **Bot de Telegram** operando en un grupo.
+El sistema implementa una red mallada inalámbrica basada en **Bluetooth Low Energy Mesh (BLE Mesh)** sobre **3 nodos ESP32-C6** (`2× DevKitC-1` + `1× SuperMini`) y **1 nodo central ESP32-S3 N16R8 (formato UNO)** que actúa como **Provisioner BLE Mesh, Gateway y Border Router Wi-Fi** hacia Internet mediante un **Bot de Telegram** operando en un grupo.
 
 ---
 
@@ -12,8 +12,8 @@ El objetivo es monitorear, asegurar y automatizar una habitación mediante un si
 
 | Dimensión | Aportes principales del proyecto |
 | :--- | :--- |
-| **Desarrollo de Sistemas IoT** | • Red mallada **BLE Mesh (ESP-BLE-MESH)** con enrutamiento multi-salto (*Relay*) y aprovisionamiento automático sin app móvil.<br>• Arquitectura **Gateway / Border Router** desacoplada (BLE Mesh ↔ Wi-Fi / HTTPS TLS ↔ Telegram Bot API).<br>• Interacción directa **M2M (C6 ↔ C6)** mediante modelo *Publish/Subscribe* por grupos.<br>• Resiliencia y seguridad básica: persistencia en NVS, validación estricta de `chat_id` del grupo autorizado en Telegram, reconexión automática Wi-Fi/TLS y monitoreo mediante *heartbeats*. |
-| **Sistemas en Tiempo Real (STR)** | • Diseño concurrente sobre **ESP-IDF puro + FreeRTOS** sin esperas activas ni `delay()` bloqueantes en rutas críticas.<br>• Planificación por prioridades (Firm/Hard RT local para interrupción PIR, RFID y alarma; Soft RT para DHT11 y *long polling* HTTPS).<br>• Uso explícito de primitivas RTOS: `ISR → xTaskNotifyFromISR`, `xQueue`, `EventGroups`, `Mutex`, `Software Timers` (`xTimer`) y **Task Watchdog Timer (TWDT)**.<br>• Aislamiento por núcleos (**Core Pinning** SMP) en el ESP32-S3 para separar stacks de radio/coexistencia de la lógica de aplicación y Telegram.<br>• Lectura determinista del DHT11 usando periférico hardware **RMT** en lugar de *bit-banging* con bloqueo de interrupciones.<br>• Instrumentación y evaluación experimental de latencias (WCRT), *jitter*, consumo de pila (*high-water mark*) e impacto de la coexistencia Wi-Fi + BLE. |
+| **Desarrollo de Sistemas IoT** | • Red mallada **BLE Mesh (ESP-BLE-MESH)** con enrutamiento multi-salto (*Relay* + modo demo `/mesh demo_hop`), aprovisionamiento automático PB-ADV y persistencia NVS.<br>• Arquitectura **Gateway / Border Router** desacoplada (BLE Mesh ↔ Wi-Fi / HTTPS TLS ↔ Telegram Bot API con *Inline Keyboard* `/panel`).<br>• Interacción directa **M2M (C6 ↔ C6)** mediante modelo *Publish/Subscribe* por grupos (RFID desarma/arma alarma directamente).<br>• Resiliencia y seguridad: failover dual Wi-Fi (`secrets.h`), verificación estricta de `chat_id`, gestión dinámica `/rfid` en NVS y monitoreo por *heartbeats*. |
+| **Sistemas en Tiempo Real (STR)** | • Diseño formal sobre **ESP-IDF puro + FreeRTOS** (con sustentación técnica de FreeRTOS sobre Zephyr) sin `delay()` bloqueantes en rutas críticas.<br>• Planificación por prioridades (Rate Monotonic / criticidad), **deadlines explícitos** y monitoreo de *deadline misses*.<br>• Uso de primitivas RTOS: `ISR → xTaskNotifyFromISR`, `xQueue`, `EventGroups`, `Mutex` (herencia de prioridad), `xTimer` y **Task Watchdog Timer (TWDT)**.<br>• **Core Pinning** SMP en el ESP32-S3 (Core 0 radio/coexistencia; Core 1 FSM y Telegram HTTPS).<br>• Lectura determinista del DHT11 usando periférico hardware **RMT** (sin *bit-banging*).<br>• **Instrumentación 100 % por software** (`esp_timer_get_time()` en µs, `vTaskGetRunTimeStats`, `uxTaskGetStackHighWaterMark`, `/metricas` en Telegram y análisis en `tools/`), sin pines GPIO de traza. |
 
 ---
 
@@ -24,269 +24,143 @@ El objetivo es monitorear, asegurar y automatizar una habitación mediante un si
 ```text
                [ Red BLE Mesh (ESP-BLE-MESH) — 4 nodos ]
 
-  ┌─────────────────────┐   ┌─────────────────────┐   ┌─────────────────────┐
-  │ Nodo 1 (ESP32-C6)   │   │ Nodo 2 (ESP32-C6)   │   │ Nodo 3 (ESP32-C6)   │
-  │ Acceso              │◄─►│ Seguridad / Alarma  │◄─►│ Climatización       │
-  │ - RFID-RC522 (SPI)  │   │ - PIR HC-SR501      │   │ - DHT11 (RMT)       │
-  │ - Cerradura (LED)   │   │ - Alarma (LED/patr.)│   │ - Ventilador (LED)  │
-  │   [Relay activo]    │   │   [Relay activo]    │   │   [Relay activo]    │
-  └──────────┬──────────┘   └──────────┬──────────┘   └──────────┬──────────┘
-             │                         │                         │
-             └─────────────────────────┼─────────────────────────┘
-                                       ▼ (BLE Mesh directo, 1 o más saltos)
-                         ┌───────────────────────────────────┐
-                         │    Gateway / Border Router        │
-                         │   ESP32-S3 N16R8 (formato UNO)    │
-                         │ - Provisioner BLE Mesh [NO-Relay] │
-                         │ - Coordinador + FSM Global        │
-                         │ - Wi-Fi + TLS + Bot de Telegram   │
-                         └─────────────────┬─────────────────┘
-                                           │ Wi-Fi (HTTPS / Long Polling)
-                                           ▼
-                         ┌───────────────────────────────────┐
-                         │         Grupo de Telegram         │
-                         │  Telemetría, Alertas y Comandos   │
-                         └───────────────────────────────────┘
+  ┌─────────────────────────┐   ┌─────────────────────────┐   ┌─────────────────────────┐
+  │ Nodo 1 (C6-DevKitC-1)   │   │ Nodo 2 (C6-DevKitC-1)   │   │ Nodo 3 (C6 SuperMini)   │
+  │ Acceso                  │◄─►│ Seguridad / Alarma      │◄─►│ Climatización           │
+  │ - RFID-RC522 (SPI, 3.3V)│   │ - PIR HC-SR501 (5V/3.3V)│   │ - DHT11 (RMT, 3.3V)     │
+  │ - Cerradura (LED toggle)│   │ - Alarma (LED patrones) │   │ - Ventilador (LED PWM)  │
+  │   [Relay activo]        │   │   [Relay activo]        │   │   [Relay activo]        │
+  └────────────┬────────────┘   └────────────┬────────────┘   └────────────┬────────────┘
+               │                             │                             │
+               └─────────────────────────────┼─────────────────────────────┘
+                                             ▼ (BLE Mesh directo, 1 o más saltos)
+                         ┌───────────────────────────────────────┐
+                         │      Gateway / Border Router          │
+                         │     ESP32-S3 N16R8 (formato UNO)      │
+                         │ - Provisioner BLE Mesh [NO-Relay]     │
+                         │ - Coordinador + FSM Global + Métricas │
+                         │ - Wi-Fi (dual failover) + Bot Telegram│
+                         └───────────────────┬───────────────────┘
+                                             │ Wi-Fi (HTTPS / Long Polling)
+                                             ▼
+                         ┌───────────────────────────────────────┐
+                         │           Grupo de Telegram           │
+                         │  Alertas, /panel (Inline) y Comandos  │
+                         └───────────────────────────────────────┘
 ```
 
 ### Justificación técnica de eliminar el 4.º nodo RCP
 
-En el ecosistema Espressif, el esquema **ESP32-C6 (RCP) + ESP32-S3 (Border Router)** es obligatorio cuando la red mallada utiliza protocolos **IEEE 802.15.4 (Thread o Zigbee)**, dado que el ESP32-S3 carece de radio 802.15.4. Sin embargo, dado que este proyecto utiliza **Bluetooth Low Energy (BLE Mesh)** y el **ESP32-S3 cuenta con radio BLE 5.0 nativa junto con Wi-Fi**, prescindir del RCP aporta beneficios directos:
-
-1. **Menor latencia y menor complejidad:** se elimina un microcontrolador intermedio y el protocolo puente local por Wi-Fi/UART entre el C6 y el S3, reduciendo saltos de red y puntos de fallo.
-2. **Mayor determinismo en las 3 ESP32-C6:** los nodos sensores/actuadores dedican el 100 % de su radio de 2.4 GHz a **BLE Mesh**, evitando contención con Wi-Fi en los nodos de campo.
-3. **Aprovechamiento del doble núcleo y PSRAM del ESP32-S3:** el S3 centraliza BLE Mesh + Wi-Fi + mbedTLS/HTTPS contando con CPU dual-core a 240 MHz y 8 MB de PSRAM.
+En el ecosistema Espressif, el esquema **ESP32-C6 (RCP) + ESP32-S3 (Border Router)** es obligatorio cuando la malla usa **Thread o Zigbee (IEEE 802.15.4)**, porque el ESP32-S3 no tiene radio 802.15.4. Al utilizar **BLE Mesh**, el **ESP32-S3** posee radio **BLE 5.0 + Wi-Fi** integrados, por lo que prescindir del RCP:
+1. Reduce latencia y elimina un protocolo puente Wi-Fi/UART adicional.
+2. Dedica el 100 % de la radio de las **3 ESP32-C6** exclusivamente a **BLE Mesh** (máximo determinismo en campo).
+3. Aprovecha los **2 núcleos (240 MHz)** y los **8 MB de Octal PSRAM** del **ESP32-S3 N16R8** para gestionar coexistencia BLE/Wi-Fi y TLS/HTTPS sin cuellos de botella de memoria.
 
 ### Distribución confirmada de placas y periféricos
 
-| Placa | Rol en la red | Periféricos asignados | Responsabilidad principal |
+| Placa | Modelo exacto | Periféricos asignados | Responsabilidad principal |
 | :--- | :--- | :--- | :--- |
-| **Nodo 1 (`ESP32-C6`)** | Acceso (*Relay*) | **RFID-RC522** (SPI, 3.3V) + **Cerradura emulada** (LED) | Lectura SPI, validación local de UIDs autorizados, pulso temporizado de apertura y publicación de eventos de acceso/desarme directo a la malla. |
-| **Nodo 2 (`ESP32-C6`)** | Seguridad / Intrusión (*Relay*) | **PIR HC-SR501** (5V alim., 3.3V señal) + **Alarma tipo carro** (LED con patrones; opcional buzzer) | Detección de movimiento por interrupción GPIO, ejecución local determinista de patrones de alarma (`ARMADA`, `DISPARADA`, etc.) y alerta prioritaria. |
-| **Nodo 3 (`ESP32-C6`)** | Climatización (*Relay*) | **DHT11** (bus 1-wire vía RMT) + **Ventilador DC emulado** (LED / PWM LEDC) | Muestreo periódico no bloqueante de temperatura/humedad y control manual o automático (por umbral con histéresis) del ventilador. |
-| **Gateway (`ESP32-S3 N16R8 UNO`)** | Provisioner BLE Mesh + Border Router (*NO-Relay*) | Sin sensores de campo | Aprovisionamiento automático de nodos C6, mantenimiento de tabla de estado global, FSM coordinadora de alarma, enlace Wi-Fi y cliente HTTPS de Telegram. |
+| **Nodo 1** | `ESP32-C6-DevKitC-1` | **RFID-RC522** (SPI, 3.3V) + **Cerradura** (LED toggle) + RGB integrado (`GPIO 8`) | Validación de UIDs desde NVS local, enclavamiento de cerradura, gestión remota `/rfid` y armado/desarme directo C6 ↔ C6 de la alarma. |
+| **Nodo 2** | `ESP32-C6-DevKitC-1` | **PIR HC-SR501** (5V alim., 3.3V señal) + **Alarma tipo carro** (LED, sin buzzer) + RGB (`GPIO 8`) | Detección de movimiento por interrupción (`ISR → TaskNotify`), patrones de alarma automotriz y disparo por PIR o 3 intentos RFID inválidos. |
+| **Nodo 3** | `ESP32-C6 SuperMini` | **DHT11** (bus 1-wire vía **RMT**) + **Ventilador DC** (LED **PWM `LEDC`** 3 niveles) + RGB (`GPIO 8`) | Lectura periódica no bloqueante cada 2–5 s y regulación automática con histéresis de 1 °C o control manual desde Telegram. |
+| **Gateway** | `ESP32-S3 N16R8` (formato UNO) | Sin sensores externos + botón `BOOT` (`GPIO 0`) + RGB integrado | Provisioner BLE Mesh automático (*NO-Relay*), tabla global de estado, failover dual Wi-Fi, cliente HTTPS Telegram (`/panel`) y recolector de métricas STR. |
 
-### Especificaciones y precauciones del ESP32-S3 N16R8 en formato UNO
-
-La placa elegida cuenta con **16 MB de Flash (`N16`)** y **8 MB de Octal PSRAM (`R8`)**, lo cual resuelve el principal cuello de botella de ejecutar simultáneamente BLE Mesh, Wi-Fi y TLS/HTTPS (mbedTLS).
-
-- **Lineamientos de configuración en ESP-IDF:**
-  - Habilitar PSRAM en modo Octal (`CONFIG_SPIRAM=y`, `CONFIG_SPIRAM_MODE_OCT=y`).
-  - Configurar mbedTLS y buffers HTTP/JSON dinámicos para alojarse en PSRAM, manteniendo **stacks de tareas críticas, colas e ISRs en SRAM interna** para preservar el determinismo en Tiempo Real.
-- **Precauciones de hardware por formato UNO y Octal PSRAM:**
-  - Verificar la equivalencia exacta entre la **serigrafía tipo Arduino UNO (`D0..D13`, `A0..A5`)** del fabricante de la placa y los **GPIOs nativos del ESP32-S3** antes de asignar cualquier pin auxiliar (p. ej. LED de estado o botón físico).
-  - **No utilizar los GPIOs 33 al 37**, ya que están reservados internamente para el bus de la **Octal PSRAM**.
-  - Si se utiliza la consola por USB nativo (USB-CDC / JTAG), **no reutilizar los GPIOs 19 y 20**.
-
-### Notas rápidas de hardware y cableado para los nodos ESP32-C6
-
-- **RFID-RC522 (Nodo 1):** alimentar **estrictamente a 3.3V** (no es tolerante a 5V en alimentación ni recomendado en lógica). Compartir masa (`GND`) y usar pines SPI dedicados con resistencia o línea estable en `CS` y `RST`.
-- **PIR HC-SR501 (Nodo 2):** requiere **5V en `VCC`** para estabilizar su regulador interno (o puente según módulo), mientras que su salida digital `OUT` entrega **3.3V** (compatible con ESP32-C6). Ajustar potenciómetros de sensibilidad/tiempo al mínimo útil y definir el jumper físico (*Repeatable trigger* `H` vs. *Single trigger* `L`) antes de medir tiempos de respuesta; contemplar el tiempo inicial de estabilización del sensor al arrancar (~30–60 s en hardware real o filtrado por software al iniciar).
-- **DHT11 (Nodo 3):** usar resistencia *pull-up* en la línea de datos (4.7 kΩ–10 kΩ a 3.3V si el módulo PCB no la incluye) y respetar el intervalo mínimo de muestreo del sensor (≥ 2 s; recomendado 2–5 s).
-- **LEDs actuadores:** emplear siempre resistencias limitadoras adecuadas (220 Ω–330 Ω) acorde a la corriente máxima por GPIO de la ESP32-C6.
+> **Nota sobre ESP32-S3 N16R8 UNO:** habilitar `CONFIG_SPIRAM=y` y `CONFIG_SPIRAM_MODE_OCT=y` para alojar buffers mbedTLS/HTTP/JSON en PSRAM (manteniendo stacks de tareas críticas en SRAM interna), y evitar los pines reservados **`GPIO 33–37`** (Octal PSRAM), **`GPIO 26–32`** (Flash) y **`GPIO 19–20`** (USB nativo).
 
 ---
 
 ## 3. Justificación del Stack: ESP-IDF puro vs. Zephyr
 
-Se **confirma el uso de ESP-IDF puro (v5.x) + FreeRTOS** como la mejor decisión técnica y de ingeniería de riesgos frente a Zephyr RTOS para los requisitos específicos de este proyecto.
+Se confirma **ESP-IDF puro (v5.x) + FreeRTOS** frente a Zephyr RTOS por razones de riesgo técnico y rigor en Sistemas en Tiempo Real:
 
-| Criterio técnico | ESP-IDF puro (v5.x + FreeRTOS) | Zephyr RTOS |
+| Criterio | ESP-IDF puro (v5.x + FreeRTOS) | Zephyr RTOS |
 | :--- | :--- | :--- |
-| **Coexistencia Wi-Fi + BLE Mesh en ESP32-S3** | Soporte oficial de primer nivel mediante `esp_ble_mesh` + módulo de coexistencia `esp_coex` validado por Espressif para radio compartida de 2.4 GHz. | Soporte de Wi-Fi + BLE simultáneos en SoCs Espressif (especialmente S3/C6) con mayor fricción de integración, parches de blobs binarios y menor madurez en ejemplos combinados de BLE Mesh + TLS. |
-| **Soporte de periféricos específicos** | Drivers nativos y estables para **Octal PSRAM** en S3 N16R8, periférico **RMT** (clave para leer DHT11 sin bloquear la CPU en C6), SPI y **TWDT**. | Requiere configurar *Devicetree overlays* y Kconfig complejos; varios periféricos específicos (como RMT para DHT11 o ajustes finos de Octal PSRAM) demandan trabajo extra de portabilidad. |
-| **Valor académico en Sistemas en Tiempo Real (STR)** | Expone directamente primitivas estándar de **FreeRTOS** (`xTaskCreatePinnedToCore`, `xTaskNotifyFromISR`, `xQueue`, `Semaphore/Mutex`, `xTimer`, análisis de prioridades y *watermark*), muy claras para documentar y sustentar. | Abstracción propia de kernel excelente, pero añade curva de aprendizaje en Kconfig/Devicetree/West que desvía tiempo del diseño RTOS y de la lógica distribuida. |
-| **Homogeneidad de hardware** | Las 4 placas son 100 % Espressif (`3x ESP32-C6` + `1x ESP32-S3`), permitiendo compartir código en `components/` nativamente. | Su mayor ventaja (portabilidad multi-fabricante hacia Nordic/STM32/NXP) no se aprovecha al usar únicamente familia ESP32. |
-
-**Conclusión:** usar **ESP-IDF puro** elimina dolores de cabeza en coexistencia Wi-Fi/BLE Mesh, PSRAM Octal y RMT, acelerando el desarrollo estable de ambos cursos.
+| **Coexistencia Wi-Fi + BLE Mesh** | Soporte oficial maduro (`esp_ble_mesh` + árbitro `esp_coex` validado en ESP32-S3). | Alta fricción para Wi-Fi + BLE simultáneos sobre blobs binarios de Espressif. |
+| **Periféricos clave (RMT, Octal PSRAM, TWDT)** | Drivers nativos listos para RMT (DHT11 no bloqueante en C6) y PSRAM Octal (`R8`) en S3. | Configuraciones complejas de *Devicetree overlays* y soporte desigual de periféricos propios. |
+| **Sustentación académica STR** | Expone directamente **Fixed-Priority Preemptive Scheduling**, herencia de prioridad en Mutex, `xTaskNotifyFromISR`, **Core Pinning** SMP y `vTaskGetRunTimeStats`. | Su principal fortaleza (portabilidad entre múltiples fabricantes como Nordic/STM32) no aporta valor en un sistema 100 % Espressif. |
 
 ---
 
 ## 4. Red BLE Mesh: Aprovisionamiento Automático e Interacción Directa C6 ↔ C6
 
-### Aprovisionamiento automático (Provisioner en ESP32-S3)
-
-Para evitar depender de una aplicación móvil externa (*nRF Mesh*) en demostraciones o reinicios, el **ESP32-S3** operará como **Provisioner BLE Mesh** embebido mediante el portador **PB-ADV**:
-
-1. **Identificación determinista por Device UUID (16 bytes):** cada nodo C6 anuncia un UUID con un prefijo fijo del proyecto (por ejemplo `0xAA, 0x55`) y un byte identificador de rol (`0x01` Acceso, `0x02` Seguridad, `0x03` Clima).
-2. **Asignación automática de direcciones Unicast:** al detectar un nodo no aprovisionado con el prefijo válido, el S3 le asigna siempre su dirección lógica predefinida:
-   - `0x0001`: **ESP32-S3** (Provisioner / Gateway)
-   - `0x0010`: **Nodo 1** (Acceso — ESP32-C6)
-   - `0x0020`: **Nodo 2** (Seguridad — ESP32-C6)
-   - `0x0030`: **Nodo 3** (Climatización — ESP32-C6)
-3. **Autoconfiguración post-aprovisionamiento:** mediante *Configuration Client*, el S3 distribuye automáticamente la `AppKey`, realiza el *Model App Bind* de los modelos y configura las direcciones de publicación y suscripción de cada nodo.
-4. **Persistencia en NVS y recuperación:** activando `CONFIG_BLE_MESH_SETTINGS=y`, tanto el Provisioner como los nodos guardan claves, direcciones e *IV Index* en NVS. Al reiniciar por corte eléctrico, la red se recompone automáticamente sin re-aprovisionar. Adicionalmente, se implementará un **botón de *factory reset*** (p. ej. mantener presionado el botón `BOOT` durante 5 s) para limpiar NVS durante pruebas de laboratorio.
-
-### Interacción directa entre nodos C6 (Publish/Subscribe) y tolerancia a fallos
-
-Se definirá un **Vendor Model** propio en `components/mesh_protocol/` con tramas binarias compactas y esquema de **confirmaciones (ACK) / retransmisiones** para comandos críticos (cerradura y armado/desarmado de alarma).
-
-#### Direcciones de grupo propuestas
-
-| Dirección de Grupo | Nombre lógico | Quién publica | Quién se suscribe | Propósito |
-| :--- | :--- | :--- | :--- | :--- |
-| **`0xC000`** | Sistema / Broadcast | Nodos 1, 2, 3 y Gateway S3 | Gateway S3 (y nodos según comando global) | *Heartbeats*, consulta de estado general y sincronización. |
-| **`0xC001`** | Seguridad y Alarma | Nodo 1 (RFID válido), Nodo 2 (PIR / estado alarma), Gateway S3 (comandos Telegram) | Nodo 2 (Alarma), Gateway S3 (y Nodo 1 opcional) | Desarme/armado directo desde RFID hacia alarma, disparos de intrusión y cambio de estado de alarma. |
-| **`0xC002`** | Acceso | Nodo 1 (eventos RFID/cerradura), Gateway S3 (comandos Telegram) | Nodo 1, Gateway S3 | Apertura/cierre remoto y notificación de tarjetas aceptadas o rechazadas. |
-| **`0xC003`** | Climatización | Nodo 3 (telemetría DHT11/ventilador), Gateway S3 (comandos Telegram) | Nodo 3, Gateway S3 | Lecturas de temperatura/humedad y control manual/automático del ventilador. |
-
-#### Autonomía en modo degradado (sin Wi-Fi ni Internet)
-
-Gracias a la suscripción directa en la malla:
-- Si se cae el router Wi-Fi o se pierde acceso a Internet, una **tarjeta RFID autorizada en el Nodo 1** abre la cerradura localmente y publica un mensaje de desarme directo al grupo **`0xC001`**, haciendo que el **Nodo 2 desarme la alarma de inmediato** sin esperar al ESP32-S3 ni a Telegram.
-- De igual forma, el **Nodo 2** sigue disparando la alarma local ante movimiento del PIR si está armada, y el **Nodo 3** mantiene la regulación automática del ventilador por umbral de temperatura.
-- Al recuperarse la conexión Wi-Fi, el ESP32-S3 sincroniza el último estado conocido hacia el grupo de Telegram.
+- **Aprovisionamiento automático (PB-ADV en ESP32-S3):** sin app móvil; cada C6 anuncia un Device UUID con prefijo `0xAA 0x55`, versión `0x01` y byte de rol (`0x01..0x03`). El S3 asigna direcciones Unicast fijas (`0x0001` Gateway, `0x0010` Nodo 1, `0x0020` Nodo 2, `0x0030` Nodo 3), distribuye `AppKey`, configura grupos Pub/Sub y activa *Relay* únicamente en las C6. Todo se persiste en **NVS** (`CONFIG_BLE_MESH_SETTINGS=y`), con *factory reset* al mantener `BOOT` durante **5 s**.
+- **Interacción directa C6 ↔ C6 (`Vendor Model`, `CID = 0x02E5`):**
+  - **`0xC000` (`GRP_SYSTEM`):** *heartbeats* (cada 15 s, timeout offline 45 s), `/estado`, métricas STR y control de demo multi-salto.
+  - **`0xC001` (`GRP_SECURITY`):** puente directo **Nodo 1 ↔ Nodo 2**. Tarjeta RFID válida al abrir cerradura desarma/silencia la alarma; al cerrar cerradura arma la alarma al instante. Tres fallos RFID seguidos disparan la alarma. Funciona **100 % offline** aunque el Wi-Fi o el S3 estén apagados.
+  - **`0xC002` (`GRP_ACCESS`):** comandos `/cerradura abrir|cerrar` y gestión `/rfid list|add|del`.
+  - **`0xC003` (`GRP_CLIMA`):** telemetría DHT11, `/ventilador` y `/umbral`.
+- **Demostración multi-salto en escritorio (`/mesh demo_hop on|off`):** reporta saltos reales (`hops = tx_ttl - rx_ttl`) en logs y `/estado`, permitiendo bajar potencia TX BLE en el Nodo 3 y filtrar paquetes directos (`hops == 0`) en el S3 para probar enrutamiento vía *Relay* (`hops >= 1`) sobre la misma mesa.
 
 ---
 
-## 5. Lógica de Alarma ("tipo carro") e Integración con Bot de Telegram
+## 5. Lógica de Alarma ("tipo carro"), Climatización y Bot de Telegram
 
-### Máquina de Estados Finita (FSM) de la alarma
-
-```text
-                /armar (o RFID)
-  [DESARMADA] ───────────────────► [ARMANDO] (gracia 5–10 s; parpadeo lento)
-       ▲                                │
-       │ /desarmar o                    │ fin temporizador
-       │ RFID válido                    ▼
-       ├─────────────────────────── [ARMADA] (confirmación doble destello)
-       │                                │
-       │ /desarmar o                    │ PIR detecta movimiento (o RFID no autoriz.)
-       │ RFID válido                    ▼
-       └─────────────────────────── [DISPARADA] (parpadeo rápido + alerta Telegram)
-```
-
-- **`DESARMADA`:** el sistema de intrusión no dispara alerta; la cerradura funciona normalmente vía RFID o Telegram.
-- **`ARMANDO`:** estado transitorio de salida (ej. 5–10 s) con destello lento del LED indicador para permitir abandonar la habitación sin auto-dispararse.
-- **`ARMADA`:** confirma activación con **doble destello rápido** (estilo alarma automotriz). Monitorea el evento de interrupción del PIR (y opcionalmente intentos reiterados de RFID inválido).
-- **`DISPARADA`:** ejecuta un patrón intermitente rápido continuo mediante temporizador RTOS y encola una alerta de **máxima prioridad** hacia el grupo de Telegram. Solo regresa a `DESARMADA` mediante el comando `/desarmar` o una tarjeta RFID autorizada.
-
-### Interacción en el Grupo de Telegram
-
-- **Alertas y telemetría automáticas hacia el grupo:**
-  - Acceso concedido o denegado por RFID (incluyendo UID y hora/secuencia).
-  - Transición de estado de alarma (`ARMANDO`, `ARMADA`, `DISPARADA` por PIR, `DESARMADA` por RFID/Telegram).
-  - Lecturas de temperatura y humedad (por cambio significativo, superación de umbral o bajo demanda).
-  - Aviso de desconexión/reincorporación de algún nodo ESP32-C6 (*heartbeat* vencido).
-- **Comandos soportados desde el grupo:**
-  - `/estado` — reporte consolidado de sensores, actuadores, estado de alarma y nodos activos en la malla.
-  - `/armar` y `/desarmar` — control de la alarma tipo carro.
-  - `/cerradura abrir` / `/cerradura cerrar` — control remoto de la cerradura emulada en Nodo 1.
-  - `/ventilador on` / `/ventilador off` / `/ventilador auto` — control manual o termostato automático en Nodo 3.
-  - `/umbral <°C>` *(opcional)* — ajuste dinámico del umbral de encendido automático del ventilador.
-- **Seguridad y operación de la API:**
-  - Configurar el bot con `@BotFather` desactivando *Group Privacy* (o usando comandos explícitos `/comando@NombreBot`).
-  - Validar obligatoriamente en el ESP32-S3 que cada actualización recibida pertenezca al **`chat_id` autorizado** del grupo, descartando mensajes de otros chats.
-  - Usar **HTTPS *Long Polling* (`getUpdates`)** con sesión persistente (`keep-alive`) para evitar bloqueos detrás de NAT y reducir la sobrecarga de *handshakes* TLS.
-  - Separar recepción de comandos y envío de notificaciones mediante una **cola priorizada** en el S3 (las alertas de alarma o intrusión adelantan a la telemetría rutinaria de temperatura).
+- **FSM de Alarma (3 estados exactos, armado instantáneo sin tiempo de gracia):**
+  - **`DESARMADA`**: confirmada con **1 destello** al entrar; LED apagado.
+  - **`ARMADA`**: confirmada al instante con **doble destello rápido**; armada por `/armar` o al cerrar la cerradura con RFID.
+  - **`DISPARADA`**: activada al instante por **PIR** o tras **3 intentos consecutivos de RFID no autorizado**; **parpadeo rápido continuo indefinido** + alerta urgente en Telegram hasta `/desarmar` o tarjeta RFID válida.
+- **Cerradura (Nodo 1):** modo **enclavado (*toggle*)** en `GPIO 20`; tarjeta autorizada alterna `ABIERTA`/`CERRADA` y arrastra a la alarma (estilo carro), mientras `/cerradura abrir|cerrar` en Telegram controla únicamente la cerradura.
+- **Climatización (Nodo 3 — PWM `LEDC`):** modo `AUTO` con **histéresis de 1.0 °C** respecto a `T_base` (defecto `25 °C`, ajustable con `/umbral <°C>`):
+  - `< 25 °C`: `OFF` (`0 %`) | `25–27 °C`: `BAJA` (`~35 %`) | `28–30 °C`: `MEDIA` (`~70 %`) | `>= 31 °C`: `ALTA` (`100 %`).
+  - Notifica al grupo solo ante cambios de nivel/umbral o bajo consulta `/estado` (sin spam periódico).
+- **Bot de Telegram en grupo autorizado:**
+  - Comandos de texto (`/panel`, `/estado`, `/armar`, `/desarmar`, `/cerradura`, `/ventilador`, `/umbral`, `/rfid`, `/mesh`, `/metricas`) + **botones interactivos (*Inline Keyboard* en `/panel`)**.
+  - Acceso verificado por `chat_id` del grupo (cualquier miembro del grupo opera); *Group Privacy* desactivado en `@BotFather`.
+  - Credenciales en `secrets.h` (ignorado por Git, con plantilla `secrets.example.h` versionada) soportando **2 redes Wi-Fi con failover automático** (casa + hotspot móvil).
 
 ---
 
-## 6. Diseño de Sistemas en Tiempo Real (STR / FreeRTOS)
+## 6. Documentación Técnica de Fase 1 (`docs/`)
 
-### Clasificación de tareas y primitivas RTOS
+Las especificaciones detalladas de arquitectura, pinout, protocolo binario, lógica funcional y análisis RTOS se encuentran en:
 
-| Nodo | Tarea / ISR | Criticidad RT | Mecanismo de activación / IPC | Prioridad relativa |
-| :--- | :--- | :--- | :--- | :--- |
-| **Nodo 1 (C6)** | `task_rfid_poll` + `timer_lock` | Alta / Media | Polling rápido SPI (con `Mutex` de bus si aplica) + `xTimer` para pulso de cerradura | Alta / Media |
-| **Nodo 1 (C6)** | `task_mesh_nodo1` | Media | Callbacks BLE Mesh ↔ `xQueue` | Media |
-| **Nodo 2 (C6)** | `pir_gpio_isr` + `task_alarm_fsm` | **Alta (Firm RT local)** | Interrupción de flanco GPIO → `xTaskNotifyFromISR` + `xTimer` para patrón LED | **Muy Alta** |
-| **Nodo 2 (C6)** | `task_mesh_nodo2` | Media | `xQueue` de eventos urgentes hacia malla | Media-Alta |
-| **Nodo 3 (C6)** | `task_dht11_rmt` | Baja (Soft RT) | Temporizador periódico (2–5 s) usando canal hardware **RMT** (no bloqueante) | Baja |
-| **Nodo 3 (C6)** | `task_fan_ctrl` | Media | `xQueue` / notificación de nueva lectura o comando remoto (histéresis) | Media |
-| **Todos (C6 + S3)** | `TWDT` + `task_heartbeat` | Supervisión | Task Watchdog Timer de ESP-IDF + `xTimer` de *heartbeat* | Baja / Sistema |
-| **Gateway (S3)** | Stacks BLE Mesh + Wi-Fi + LwIP | Alta (Sistema / Radio) | Gestor de coexistencia `esp_coex` fijado en **Core 0** | Sistema / Alta |
-| **Gateway (S3)** | `task_state_fsm` | Media-Alta | `xQueue` unificada + `Mutex` de estado global en **Core 1** | Media-Alta |
-| **Gateway (S3)** | `task_tg_tx` (Alertas/Telemetría) | Media | `xQueue` priorizada (alertas antes que telemetría) en **Core 1** | Media |
-| **Gateway (S3)** | `task_tg_rx` (*Long Polling*) | Baja (Soft RT) | Ciclo HTTPS `getUpdates` con `keep-alive` en **Core 1** | Baja |
-
-### Core Pinning en ESP32-S3 y estrategia de coexistencia
-
-Para proteger el determinismo del **ESP32-S3 N16R8**, se emplea asignación explícita de núcleos (`xTaskCreatePinnedToCore`):
-- **Core 0 (Protocolos / Radio):** tareas de Bluetooth/BLE Mesh, controlador Wi-Fi, pila LwIP y árbitro de coexistencia software (`esp_coex`).
-- **Core 1 (Aplicación / Red superior):** máquina de estados global, tabla de estado de nodos, cola de prioridad y clientes HTTPS RX/TX hacia la API de Telegram.
-
-**Mitigación de contención BLE Mesh + Wi-Fi en la radio única del S3:**
-1. Configurar el ESP32-S3 con la característica **Relay deshabilitada (*NO-Relay*)** en BLE Mesh (los 3 nodos ESP32-C6 son quienes hacen de *Relay*), evitando que el S3 gaste ventanas de radio reenviando tramas ajenas.
-2. Utilizar **mensajes con ACK/retransmisión** en el *Vendor Model* para eventos críticos (disparo PIR, apertura de cerradura, cambio de estado de alarma).
-3. Mantener sesión **TLS persistente (`keep-alive`)** para Telegram alojando buffers pesados de mbedTLS en la **Octal PSRAM**.
-
-### Métricas planificadas para evaluación STR (carpeta `docs/metricas-str/`)
-
-1. **Latencia local (WCRT):** tiempo desde flanco de subida del PIR en Nodo 2 hasta activación del LED de alarma (objetivo: sub-milisegundo / pocos milisegundos).
-2. **Latencia de red BLE Mesh:** tiempo desde evento en C6 hasta recepción en ESP32-S3 en **1 salto (directo)** vs. **2 saltos (vía Relay)**, comparando el escenario **sin tráfico Wi-Fi** vs. **con sesión HTTPS Telegram activa** (análisis experimental de coexistencia).
-3. **Latencia extremo a extremo:** tiempo total desde detección física (PIR / RFID) hasta entrega del mensaje en el grupo de Telegram, y viceversa (comando Telegram → actuación física en C6).
-4. **Jitter de tarea periódica:** desviación temporal en el muestreo periódico del DHT11 vía RMT.
-5. **Uso de recursos y tolerancia a fallos:** *stack high-water mark* (`uxTaskGetStackHighWaterMark`) por tarea, ocupación de SRAM interna vs. Octal PSRAM y tiempo de recuperación tras inyección de bloqueo evaluado con **TWDT**.
+- [**Pinout y Especificaciones de Hardware**](docs/hardware/pinout.md) — Mapeo GPIO de las 4 placas (`2× C6-DevKitC-1`, `C6 SuperMini`, `S3 N16R8 UNO`), restricciones de pines, alimentación y código RGB de estado.
+- [**Protocolo BLE Mesh y Vendor Model**](docs/diagramas/protocolo_ble_mesh.md) — Device UUID, aprovisionamiento automático PB-ADV, direcciones Unicast/Grupos, opcodes y payloads byte a byte, ACKs y modo `/mesh demo_hop`.
+- [**Máquinas de Estados (FSM) y Bot de Telegram**](docs/diagramas/fsm_y_telegram.md) — Transiciones de alarma tipo carro, toggle de cerradura, gestión NVS `/rfid`, escalones PWM/histéresis, diseño del `/panel` *Inline Keyboard* y failover Wi-Fi.
+- [**Diseño Formal RTOS y Plan Experimental STR**](docs/metricas-str/diseno_rtos_str.md) — Sustentación FreeRTOS vs. Zephyr, tablas formales de tareas/prioridades/deadlines, *Core Pinning*, TWDT e instrumentación por software (`esp_timer_get_time()` + `/metricas`).
 
 ---
 
 ## 7. Estructura del Repositorio
 
-El repositorio está organizado como un monorepo con **componentes compartidos** y **4 proyectos independientes de ESP-IDF** (3 compilados para `target esp32c6` y 1 para `target esp32s3`), enlazando la carpeta `components/` desde cada proyecto mediante `EXTRA_COMPONENT_DIRS`:
-
 ```text
 Proyecto-IoT-RTS/
-├── README.md                           # Documentación integral, arquitectura y plan de acción
-├── .gitignore                          # Exclusiones de build, sdkconfig local y secretos
+├── README.md                                 # Visión integral, decisiones y roadmap
+├── .gitignore                                # Exclusiones ESP-IDF, build/, sdkconfig y secrets.h
 ├── docs/
-│   ├── diagramas/                      # Diagramas de arquitectura, FSM y secuencias
-│   ├── hardware/                       # Pinouts de las 3x C6 y S3 N16R8 UNO, esquemáticos
-│   └── metricas-str/                   # Tablas de latencias, jitter, memoria y pruebas RTOS
+│   ├── diagramas/
+│   │   ├── protocolo_ble_mesh.md             # Contrato Vendor Model, PB-ADV y demo_hop
+│   │   └── fsm_y_telegram.md                 # FSM alarma/cerradura/clima y UI Telegram
+│   ├── hardware/
+│   │   └── pinout.md                         # Pinout de las 4 placas y código LED RGB
+│   └── metricas-str/
+│       └── diseno_rtos_str.md                # Tablas RTOS, deadlines, FreeRTOS vs Zephyr y E1–E6
 ├── components/
-│   ├── common_types/                   # Estructuras compartidas, estados de alarma, errores
-│   └── mesh_protocol/                  # Definición del Vendor Model, opcodes y payloads binarios
+│   ├── common_types/                         # Estructuras compartidas, estados y códigos de error
+│   └── mesh_protocol/                        # Vendor Model, opcodes, serialización y ACKs
 ├── firmware/
-│   ├── nodo1_acceso_c6/                # Proyecto ESP-IDF (esp32c6): RFID-RC522 + Cerradura
-│   ├── nodo2_seguridad_c6/             # Proyecto ESP-IDF (esp32c6): PIR HC-SR501 + Alarma
-│   ├── nodo3_clima_c6/                 # Proyecto ESP-IDF (esp32c6): DHT11 (RMT) + Ventilador
-│   └── gateway_s3_uno/                 # Proyecto ESP-IDF (esp32s3): Provisioner + Wi-Fi + Telegram
-└── tools/                              # Scripts auxiliares de análisis de logs y métricas
+│   ├── nodo1_acceso_c6/                      # Proyecto ESP-IDF (esp32c6 DevKitC-1): RC522 + Cerradura
+│   ├── nodo2_seguridad_c6/                   # Proyecto ESP-IDF (esp32c6 DevKitC-1): PIR + Alarma
+│   ├── nodo3_clima_c6/                       # Proyecto ESP-IDF (esp32c6 SuperMini): DHT11 + PWM
+│   └── gateway_s3_uno/                       # Proyecto ESP-IDF (esp32s3 N16R8 UNO): Provisioner + Telegram
+└── tools/                                    # Scripts Python para procesar logs [STR_METRIC]
 ```
 
-*(Los directorios vacíos contienen archivos `.gitkeep` temporales para preservar la estructura en Git hasta incorporar el código de cada módulo).*
+*(Los directorios bajo `components/`, `firmware/` y `tools/` mantienen archivos `.gitkeep` temporales hasta incorporar el código fuente de cada fase).*
 
 ---
 
-## 8. Plan de Acción por Fases (Fases 1 a 6)
+## 8. Plan de Acción por Fases
 
-### Fase 1 — Pinout, contratos BLE Mesh y diseño RTOS
-- Definir y documentar en `docs/hardware/` el mapeo exacto de pines de las **3 ESP32-C6** y del **ESP32-S3 N16R8 UNO** (verificando serigrafía UNO vs. GPIOs reservados de Octal PSRAM/USB).
-- Especificar en `docs/diagramas/` el contrato del **Vendor Model** (opcodes, payloads, ACKs), el formato de Device UUID (`0xAA 0x55 ... <rol>`), las direcciones unicast/grupo y la tabla definitiva de prioridades FreeRTOS.
-- **Criterio de validación:** mapa de pines libre de conflictos y especificación de tramas cerrada antes de escribir drivers.
-
-### Fase 2 — Drivers y pruebas unitarias FreeRTOS en las 3 ESP32-C6
-- Implementar y validar de forma aislada (sin red BLE Mesh) cada proyecto en `firmware/nodo*_c6/`, ya estructurado con tareas, colas, temporizadores y TWDT:
-  - **Nodo 1:** driver SPI del RC522, lista de UIDs válidos y temporización no bloqueante de cerradura.
-  - **Nodo 2:** interrupción de flanco del PIR (`ISR → TaskNotify`) + patrones LED de los 4 estados de alarma.
-  - **Nodo 3:** lectura del DHT11 por periférico hardware **RMT** + lógica de control del ventilador con histéresis.
-- **Criterio de validación:** cada nodo responde sin bloqueos, sin advertencias del Watchdog y con márgenes de stack verificados.
-
-### Fase 3 — Red BLE Mesh completa (aprovisionamiento automático, C6 ↔ C6 y multi-salto)
-- Implementar el **Provisioner automático** (PB-ADV) en `firmware/gateway_s3_uno/` y habilitar la persistencia NVS + *factory reset* por botón `BOOT` (5 s) en las 4 placas.
-- Validar la comunicación bidireccional de modelos compartidos (`components/mesh_protocol/`):
-  - *Uplink:* eventos RFID, disparos PIR, lecturas DHT11 y *heartbeats* hacia el S3.
-  - *Downlink:* comandos desde el S3 hacia los nodos C6.
-  - *Directo C6 ↔ C6:* desarme inmediato de alarma en Nodo 2 al leer tarjeta válida en Nodo 1 (grupo `0xC001`).
-- Realizar prueba física de **enrutamiento multi-salto (*Relay*)** alejando o atenuando un nodo para confirmar que alcanza al S3 a través de otro C6.
-- **Criterio de validación:** la malla se aprovisiona sola al encender, sobrevive a reinicios eléctricos (NVS) y confirma entrega multi-salto.
-
-### Fase 4 — Coexistencia Wi-Fi + BLE Mesh y Bot de Telegram en el ESP32-S3
-- Configurar en `gateway_s3_uno` la **Octal PSRAM (`N16R8`)**, la coexistencia Wi-Fi + BLE Mesh (`esp_coex`), el S3 como **NO-Relay** y el *Core Pinning* (Core 0 radio / Core 1 lógica y Telegram).
-- Crear el bot en `@BotFather`, integrarlo en el grupo de pruebas, restringir acceso por `chat_id` e implementar `task_tg_rx` (*Long Polling* HTTPS con `keep-alive`) y `task_tg_tx` (cola priorizada).
-- **Criterio de validación:** operación continua simultánea de BLE Mesh y HTTPS Telegram sin agotamiento de SRAM interna ni caída de enlaces.
-
-### Fase 5 — Lógica integral de alarma tipo carro y modo offline/degradado
-- Integrar la FSM completa de alarma sincronizada entre el Gateway S3, el grupo de Telegram y el Nodo 2 (incluyendo tiempo de gracia `ARMANDO`, doble destello en `ARMADA`, disparo por PIR y desarme por Telegram o RFID).
-- Ejecutar pruebas de **tolerancia a fallos**:
-  - Desconectar el router Wi-Fi / Internet y confirmar que el RFID sigue abriendo la cerradura y desarmando la alarma vía malla directa C6 ↔ C6, que el PIR sigue disparando la alarma local y que el ventilador continúa operando en modo automático.
-  - Reconectar Wi-Fi y validar resincronización hacia Telegram.
-- **Criterio de validación:** cero pérdida de funcionalidad crítica de seguridad local sin Internet y recuperación limpia al restaurar conectividad.
-
-### Fase 6 — Mediciones de Tiempo Real, pruebas de estrés y documentación final
-- Instrumentar tiempos (con `esp_timer_get_time()` / GPIO de traza) y registrar resultados en `docs/metricas-str/`:
-  - Latencia PIR → alarma local.
-  - Latencia BLE Mesh 1 salto vs. 2 saltos (con y sin tráfico HTTPS/Wi-Fi activo en S3).
-  - Latencia extremo a extremo hasta Telegram.
-  - Jitter del muestreo DHT11, *stack high-water mark*, consumo SRAM/PSRAM y pruebas de recuperación ante fallos forzados con TWDT.
-- Consolidar diagramas definitivos en `docs/diagramas/` para las entregas e informes finales de **Desarrollo de Sistemas IoT** y **Sistemas en Tiempo Real**.
+- [x] **Fase 1 — Pinout, contratos BLE Mesh y diseño RTOS**
+  - Definición cerrada de hardware (`2× C6-DevKitC-1`, `C6 SuperMini`, `S3 N16R8 UNO`), protocolo BLE Mesh (`Vendor Model` + PB-ADV), FSMs, interfaz Telegram `/panel` y tablas formales STR documentadas en `docs/`.
+- [ ] **Fase 2 — Drivers y pruebas unitarias FreeRTOS en las 3 ESP32-C6**
+  - Crear proyectos base en `components/` y `firmware/`, validar SPI RC522 + NVS + cerradura (Nodo 1), interrupción PIR + patrones LED alarma (Nodo 2), DHT11 por RMT + PWM `LEDC` (Nodo 3) y márgenes de stack/TWDT sin red.
+- [ ] **Fase 3 — Red BLE Mesh completa (aprovisionamiento automático, C6 ↔ C6 y multi-salto)**
+  - Implementar Provisioner PB-ADV en ESP32-S3, persistencia NVS + *factory reset* (`BOOT` 5 s), comunicación directa `0xC001` (RFID ↔ Alarma) y prueba física/escritorio de *Relay* (`/mesh demo_hop`).
+- [ ] **Fase 4 — Coexistencia Wi-Fi + BLE Mesh y Bot de Telegram en el ESP32-S3**
+  - Configurar Octal PSRAM (`N16R8`), `esp_coex`, *Core Pinning* (Core 0/Core 1), failover dual Wi-Fi (`secrets.h`), *Long Polling* HTTPS (`keep-alive`), comandos de texto y `/panel` *Inline Keyboard*.
+- [ ] **Fase 5 — Lógica integral, gestión `/rfid` y pruebas en modo offline/degradado**
+  - Validar flujo completo de alarma (incluidos 3 fallos RFID), alta/baja remota de tarjetas en NVS y autonomía de la malla sin Wi-Fi ni Internet.
+- [ ] **Fase 6 — Mediciones de Tiempo Real (E1–E6) y documentación de resultados**
+  - Recolectar logs `[STR_METRIC]`, procesar percentiles/WCRT/jitter en `tools/`, registrar resultados de coexistencia en `docs/metricas-str/` y consolidar entregas de **IoT** y **STR**.
