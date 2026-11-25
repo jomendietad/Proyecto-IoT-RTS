@@ -1,0 +1,18 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "rc522_spi.c"
+        "rfid_store_nvs.c"
+        "lock_ctrl.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        common_types
+        mesh_protocol
+        esp_driver_gpio
+        esp_driver_spi
+        esp_timer
+        nvs_flash
+        esp_system
+        freertos
+)
