@@ -1,0 +1,17 @@
+menu "Gateway S3 Configuration"
+
+    config GW_RGB_GPIO
+        int "Integrated WS2812 RGB LED GPIO"
+        range 0 48
+        default 48
+        help
+            GPIO connected to the integrated WS2812 RGB LED on the ESP32-S3 UNO board (usually 48 or 38).
+
+    config GW_BOOT_GPIO
+        int "BOOT button GPIO for Factory Reset"
+        range 0 48
+        default 0
+        help
+            GPIO connected to the BOOT button on the ESP32-S3 UNO board (default 0).
+
+endmenu
