@@ -120,6 +120,7 @@ Las especificaciones detalladas de arquitectura, pinout, protocolo binario, lóg
 - [**Protocolo BLE Mesh y Vendor Model**](docs/diagramas/protocolo_ble_mesh.md) — Device UUID, aprovisionamiento automático PB-ADV, direcciones Unicast/Grupos, opcodes y payloads byte a byte, ACKs y modo `/mesh demo_hop`.
 - [**Máquinas de Estados (FSM) y Bot de Telegram**](docs/diagramas/fsm_y_telegram.md) — Transiciones de alarma tipo carro, toggle de cerradura, gestión NVS `/rfid`, escalones PWM/histéresis, diseño del `/panel` *Inline Keyboard* y failover Wi-Fi.
 - [**Diseño Formal RTOS y Plan Experimental STR**](docs/metricas-str/diseno_rtos_str.md) — Sustentación FreeRTOS vs. Zephyr, tablas formales de tareas/prioridades/deadlines, *Core Pinning*, TWDT e instrumentación por software (`esp_timer_get_time()` + `/metricas`).
+- [**Bitácora de Pruebas y Resultados Experimentales**](docs/metricas-str/bitacora_pruebas.md) — Registro cronológico de validaciones en hardware real, métricas STR observadas y estado de avance por nodo.
 
 ---
 
@@ -138,7 +139,8 @@ Proyecto-IoT-RTS/
 │   ├── hardware/
 │   │   └── pinout.md                         # Pinout de las 4 placas y código LED RGB
 │   └── metricas-str/
-│       └── diseno_rtos_str.md                # Tablas RTOS, deadlines, FreeRTOS vs Zephyr y E1–E6
+│       ├── diseno_rtos_str.md                # Tablas RTOS, deadlines, FreeRTOS vs Zephyr y E1–E6
+│       └── bitacora_pruebas.md               # Registro de pruebas en hardware y métricas reales
 ├── components/
 │   ├── common_types/                         # Estructuras compartidas, estados y códigos de error
 │   └── mesh_protocol/                        # Vendor Model, opcodes, serialización y ACKs
