@@ -1,5 +1,6 @@
 #include "dht11_rmt.h"
 
+#include <inttypes.h>
 #include "driver/gpio.h"
 #include "driver/rmt_rx.h"
 #include "esp_attr.h"
@@ -10,11 +11,24 @@
 static const char *TAG = "dht11_rmt";
 
 /* Pinout exacto según docs/hardware/pinout.md (Nodo 3 ESP32-C6 SuperMini) */
-#define DHT11_GPIO        GPIO_NUM_2
-#define DHT11_RMT_RES_HZ  1000000U /* 1 us por tick */
+#define DHT11_GPIO           GPIO_NUM_2
+#define DHT11_RMT_RES_HZ     1000000U /* 1 us por tick */
+#define DHT11_START_LOW_MS   22U      /* Margen seguro >20 ms para clones a 3.3 V */
+#define DHT11_MIN_GLITCH_NS  1000U
+#define DHT11_IDLE_MAX_NS    300000U  /* 300 us para tolerar flancos lentos con pull-up interno */
 
 static rmt_channel_handle_t s_rx_chan = NULL;
 static TaskHandle_t s_wait_task = NULL;
+/* Buffer estatico en DRAM para evitar escrituras de ISR tras un timeout */
+static rmt_symbol_word_t s_rx_symbols[64];
+
+static void dht11_rmt_recover_channel(void)
+{
+    if (s_rx_chan != NULL) {
+        (void)rmt_disable(s_rx_chan);
+        (void)rmt_enable(s_rx_chan);
+    }
+}
 
 static bool IRAM_ATTR dht11_rx_done_cb(rmt_channel_handle_t channel,
                                        const rmt_rx_done_event_data_t *edata,
@@ -34,6 +48,17 @@ esp_err_t dht11_rmt_init(void)
     if (s_rx_chan != NULL) {
         return ESP_OK;
     }
+
+    /* Fijar bus en alto antes de habilitar drenador abierto para evitar glitch inicial en bajo */
+    ESP_ERROR_CHECK(gpio_set_level(DHT11_GPIO, 1));
+    const gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << DHT11_GPIO),
+        .mode = GPIO_MODE_INPUT_OUTPUT_OD,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
 
     const rmt_rx_channel_config_t rx_cfg = {
         .gpio_num = DHT11_GPIO,
@@ -60,10 +85,10 @@ esp_err_t dht11_rmt_init(void)
         return err;
     }
 
-    /* Drenador abierto + pull-up interno para bus 1-wire bidireccional */
-    ESP_ERROR_CHECK(gpio_set_direction(DHT11_GPIO, GPIO_MODE_INPUT_OUTPUT_OD));
+    /* Reafirmar drenador abierto + pull-up interno tras configurar matriz RMT */
     ESP_ERROR_CHECK(gpio_set_pull_mode(DHT11_GPIO, GPIO_PULLUP_ONLY));
     ESP_ERROR_CHECK(gpio_set_level(DHT11_GPIO, 1));
+    ESP_ERROR_CHECK(gpio_set_direction(DHT11_GPIO, GPIO_MODE_INPUT_OUTPUT_OD));
 
     ESP_LOGI(TAG, "DHT11 RMT RX inicializado en GPIO %d (1 MHz)", DHT11_GPIO);
     return ESP_OK;
@@ -75,22 +100,31 @@ esp_err_t dht11_rmt_read(int16_t *out_temp_deci_c, uint8_t *out_hum_pct)
         return ESP_ERR_INVALID_STATE;
     }
 
-    rmt_symbol_word_t symbols[64];
     uint16_t high_pulses[64];
     size_t high_count = 0;
+
+    /* Garantizar reposo en alto antes del pulso de inicio */
+    gpio_set_level(DHT11_GPIO, 1);
+    if (gpio_get_level(DHT11_GPIO) == 0) {
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
 
     s_wait_task = xTaskGetCurrentTaskHandle();
     (void)xTaskNotifyStateClear(NULL);
 
-    /* Pulso de inicio: 20 ms en bajo sin bloquear planificador FreeRTOS */
+    /* Pulso de inicio sin bloquear planificador FreeRTOS */
     gpio_set_level(DHT11_GPIO, 0);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(DHT11_START_LOW_MS));
 
     const rmt_receive_config_t recv_cfg = {
-        .signal_range_min_ns = 1000U,
-        .signal_range_max_ns = 200000U,
+        .signal_range_min_ns = DHT11_MIN_GLITCH_NS,
+        .signal_range_max_ns = DHT11_IDLE_MAX_NS,
     };
-    esp_err_t err = rmt_receive(s_rx_chan, symbols, sizeof(symbols), &recv_cfg);
+    esp_err_t err = rmt_receive(s_rx_chan, s_rx_symbols, sizeof(s_rx_symbols), &recv_cfg);
+    if (err == ESP_ERR_INVALID_STATE) {
+        dht11_rmt_recover_channel();
+        err = rmt_receive(s_rx_chan, s_rx_symbols, sizeof(s_rx_symbols), &recv_cfg);
+    }
     gpio_set_level(DHT11_GPIO, 1);
 
     if (err != ESP_OK) {
@@ -101,6 +135,8 @@ esp_err_t dht11_rmt_read(int16_t *out_temp_deci_c, uint8_t *out_hum_pct)
     uint32_t num_sym = 0;
     if (xTaskNotifyWait(0, 0xFFFFFFFFUL, &num_sym, pdMS_TO_TICKS(50)) != pdTRUE) {
         s_wait_task = NULL;
+        dht11_rmt_recover_channel();
+        gpio_set_level(DHT11_GPIO, 1);
         return ESP_ERR_TIMEOUT;
     }
     s_wait_task = NULL;
@@ -111,10 +147,10 @@ esp_err_t dht11_rmt_read(int16_t *out_temp_deci_c, uint8_t *out_hum_pct)
 
     for (size_t i = 0; i < num_sym; i++) {
         uint16_t h = 0;
-        if (symbols[i].level0 == 1 && symbols[i].duration0 > 0) {
-            h = symbols[i].duration0;
-        } else if (symbols[i].level1 == 1 && symbols[i].duration1 > 0) {
-            h = symbols[i].duration1;
+        if (s_rx_symbols[i].level0 == 1 && s_rx_symbols[i].duration0 > 0) {
+            h = s_rx_symbols[i].duration0;
+        } else if (s_rx_symbols[i].level1 == 1 && s_rx_symbols[i].duration1 > 0) {
+            h = s_rx_symbols[i].duration1;
         }
         if (h > 0U && high_count < 64U) {
             high_pulses[high_count++] = h;
@@ -122,6 +158,8 @@ esp_err_t dht11_rmt_read(int16_t *out_temp_deci_c, uint8_t *out_hum_pct)
     }
 
     if (high_count < 40U) {
+        ESP_LOGD(TAG, "Respuesta incompleta DHT11 (num_sym=%" PRIu32 ", high_count=%u, lvl=%d)",
+                 num_sym, (unsigned int)high_count, gpio_get_level(DHT11_GPIO));
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -136,6 +174,8 @@ esp_err_t dht11_rmt_read(int16_t *out_temp_deci_c, uint8_t *out_hum_pct)
 
     const uint8_t csum = (uint8_t)((data[0] + data[1] + data[2] + data[3]) & 0xFFU);
     if (csum != data[4]) {
+        ESP_LOGD(TAG, "CRC invalido DHT11 (num_sym=%" PRIu32 ", high_count=%u, lvl=%d, csum=0x%02X vs 0x%02X)",
+                 num_sym, (unsigned int)high_count, gpio_get_level(DHT11_GPIO), csum, data[4]);
         return ESP_ERR_INVALID_CRC;
     }
 
