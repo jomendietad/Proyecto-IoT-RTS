@@ -6,6 +6,7 @@
 #include "esp_timer.h"
 #include "freertos/semphr.h"
 #include "freertos/timers.h"
+#include "ble_peripheral.h"
 #include "ble_protocol.h"
 #include "pir_sensor.h"
 #include "status_led.h"
@@ -116,8 +117,10 @@ static void log_alarm_ble_event(iot_alarm_state_t st, iot_alarm_reason_t reason,
         .fail_counter = s_fail_counter,
         .flags = pir_sensor_is_active() ? 0x01U : 0x00U,
     };
-    ESP_LOGI(TAG, "FSM -> %s (reason=%u fail=%u lat=%" PRIu32 "us) | GATT Notify: OP_ALARM_EVENT seq=%u",
-             iot_alarm_state_str(st), pkt.reason, pkt.fail_counter, pkt.local_latency_us, pkt.seq_num);
+    const esp_err_t tx_err = ble_peripheral_notify(OP_ALARM_EVENT, &pkt, sizeof(pkt));
+    ESP_LOGI(TAG, "FSM -> %s (reason=%u fail=%u lat=%" PRIu32 "us) | GATT Notify: OP_ALARM_EVENT seq=%u (%s)",
+             iot_alarm_state_str(st), pkt.reason, pkt.fail_counter, pkt.local_latency_us, pkt.seq_num,
+             (tx_err == ESP_OK) ? "TX_OK" : "LOCAL");
 }
 
 static void task_alarm_fsm(void *arg)
@@ -128,25 +131,29 @@ static void task_alarm_fsm(void *arg)
     uint32_t bits = 0;
     while (1) {
         if (xTaskNotifyWait(0, 0xFFFFFFFFUL, &bits, pdMS_TO_TICKS(2000)) == pdTRUE) {
-            if (bits & ALARM_EVT_CMD_DISARM) {
+            if (bits & (ALARM_EVT_CMD_DISARM | ALARM_EVT_RFID_DISARM)) {
+                const iot_alarm_reason_t reason =
+                    (bits & ALARM_EVT_RFID_DISARM) ? ALARM_REASON_RFID_OPEN : ALARM_REASON_CMD_TG;
                 xSemaphoreTake(s_state_mutex, portMAX_DELAY);
                 s_state = ALARM_STATE_DESARMADA;
                 s_fail_counter = 0;
                 start_pattern_disarmed();
                 xSemaphoreGive(s_state_mutex);
 
-                status_led_set_state(STATUS_LED_UNPROVISIONED);
-                log_alarm_ble_event(ALARM_STATE_DESARMADA, ALARM_REASON_CMD_TG, 0);
+                status_led_set_state(ble_peripheral_is_subscribed() ? STATUS_LED_CONNECTED : STATUS_LED_DISCONNECTED);
+                log_alarm_ble_event(ALARM_STATE_DESARMADA, reason, 0);
             }
 
-            if (bits & ALARM_EVT_CMD_ARM) {
+            if (bits & (ALARM_EVT_CMD_ARM | ALARM_EVT_RFID_ARM)) {
+                const iot_alarm_reason_t reason =
+                    (bits & ALARM_EVT_RFID_ARM) ? ALARM_REASON_RFID_CLOSE : ALARM_REASON_CMD_TG;
                 xSemaphoreTake(s_state_mutex, portMAX_DELAY);
                 if (s_state != ALARM_STATE_DISPARADA) {
                     s_state = ALARM_STATE_ARMADA;
                     s_fail_counter = 0;
                     start_pattern_armed();
                     xSemaphoreGive(s_state_mutex);
-                    log_alarm_ble_event(ALARM_STATE_ARMADA, ALARM_REASON_CMD_TG, 0);
+                    log_alarm_ble_event(ALARM_STATE_ARMADA, reason, 0);
                 } else {
                     xSemaphoreGive(s_state_mutex);
                 }
@@ -187,6 +194,7 @@ static void task_alarm_fsm(void *arg)
                         xSemaphoreGive(s_state_mutex);
                         ESP_LOGW(TAG, "Fallo RFID acumulado (%u/%u) con alarma ARMADA",
                                  cur_fails, IOT_RFID_FAIL_TRIGGER_COUNT);
+                        log_alarm_ble_event(ALARM_STATE_ARMADA, ALARM_REASON_RFID_3_FAILS, 0);
                     }
                 } else {
                     xSemaphoreGive(s_state_mutex);
@@ -268,4 +276,25 @@ uint8_t alarm_fsm_get_fail_counter(void)
     const uint8_t fc = s_fail_counter;
     xSemaphoreGive(s_state_mutex);
     return fc;
+}
+
+void alarm_fsm_send_current_status(void)
+{
+    if (!s_state_mutex) {
+        return;
+    }
+    xSemaphoreTake(s_state_mutex, portMAX_DELAY);
+    const iot_alarm_state_t st = s_state;
+    const uint8_t fc = s_fail_counter;
+    xSemaphoreGive(s_state_mutex);
+
+    const ble_alarm_event_t pkt = {
+        .seq_num = ++s_seq,
+        .new_state = (uint8_t)st,
+        .reason = ALARM_REASON_CMD_TG,
+        .local_latency_us = 0,
+        .fail_counter = fc,
+        .flags = pir_sensor_is_active() ? 0x01U : 0x00U,
+    };
+    (void)ble_peripheral_notify(OP_ALARM_EVENT, &pkt, sizeof(pkt));
 }
