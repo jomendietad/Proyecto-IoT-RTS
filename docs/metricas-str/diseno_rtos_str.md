@@ -14,14 +14,14 @@ En la asignatura de Sistemas en Tiempo Real es fundamental justificar por qué l
 3. **Notificaciones directas de latencia mínima (`xTaskNotifyFromISR`):** para el disparo del sensor PIR en Nodo 2, la ISR despierta la tarea de alarma mediante notificación directa al TCB de la tarea, evitando la copia en memoria y el overhead de una cola clásica (~45 % más rápido según documentación oficial de FreeRTOS).
 4. **Aislamiento físico por núcleos (*Core Pinning* SMP en ESP32-S3):** mediante `xTaskCreatePinnedToCore()`, el Gateway ESP32-S3 confina las pilas asíncronas de radio (**BLE Mesh + Wi-Fi + LwIP + `esp_coex`**) al **Core 0**, aislando el **Core 1** para la máquina de estados global, la cola prioritaria de alertas y las transacciones bloqueantes TLS/HTTPS con Telegram.
 5. **Determinismo de periféricos críticos y coexistencia probada:**
-   - En el Nodo 3, el **DHT11** exige pulsos del orden de **20–80 µs**. Usar *bit-banging* por CPU deshabilitando interrupciones destruye el determinismo de FreeRTOS y afecta la pila BLE Mesh; en ESP-IDF se utiliza el **periférico hardware RMT**, que captura los flancos por DMA/memoria dedicada sin bloquear la CPU ni alterar el planificador.
-   - En el ESP32-S3, la coexistencia **Wi-Fi + BLE Mesh** depende directamente del árbitro de hardware/software `esp_coex` y del soporte maduro de **Octal PSRAM (`N16R8`)**, ambos integrados y validados nativamente por Espressif en ESP-IDF v6.1.1.
+   - En el Nodo 3, el **DHT11** exige pulsos del orden de **20–80 µs**. Usar *bit-banging* por CPU deshabilitando interrupciones destruye el determinismo de FreeRTOS; en ESP-IDF se utiliza el **periférico hardware RMT**, que captura los flancos por memoria dedicada sin bloquear la CPU ni alterar el planificador.
+   - En el ESP32-S3, la coexistencia **Wi-Fi + BLE (NimBLE)** depende directamente del árbitro de hardware/software `esp_coex` y del soporte maduro de **Octal PSRAM (`N16R8`)**, ambos integrados y validados nativamente por Espressif en ESP-IDF v6.1.1. Usar **BLE GATT en estrella sobre NimBLE** en lugar de BLE Mesh elimina las ventanas continuas de escaneo/reenvío *Relay*, reduciendo la contención con el tráfico Wi-Fi HTTPS.
 
 ### Comparativa objetiva FreeRTOS (ESP-IDF) vs. Zephyr RTOS
 
 | Criterio STR / Ingeniería | FreeRTOS (ESP-IDF v6.1.1 puro) | Zephyr RTOS |
 | :--- | :--- | :--- |
-| **Determinismo de radio dual (BLE Mesh + Wi-Fi)** | **Óptimo:** árbitro oficial `esp_coex` sintonizado por el fabricante del silicio. | **Riesgo alto:** soporte BLE + Wi-Fi simultáneo en ESP32-S3 aún requiere ajustes complejos sobre blobs binarios. |
+| **Determinismo de radio dual (BLE NimBLE + Wi-Fi)** | **Óptimo:** árbitro oficial `esp_coex` sintonizado por el fabricante del silicio. | **Riesgo alto:** soporte BLE + Wi-Fi simultáneo en ESP32-S3 aún requiere ajustes complejos sobre blobs binarios. |
 | **Periféricos críticos (RMT + Octal PSRAM + TWDT)** | **Nativo:** APIs estables de RMT, SPI DMA, PSRAM Octal y Task Watchdog por tarea. | Requiere escribir y depurar *Devicetree overlays* y drivers no siempre completos para C6/S3. |
 | **Análisis formal e instrumentación STR** | Primitivas directas: `vTaskGetRunTimeStats`, `uxTaskGetStackHighWaterMark`, `esp_timer_get_time()`. | Excelente subsistema de tracing, pero añade sobrecarga conceptual de Devicetree/West ajena al objetivo RTOS. |
 | **Portabilidad multi-fabricante** | Baja (orientado a ESP32). | **Excelente** (ventaja decisiva **solo** si el proyecto combinara MCUs de distintos fabricantes como Nordic + STM32 + ESP32). |
@@ -52,21 +52,20 @@ En la asignatura de Sistemas en Tiempo Real es fundamental justificar por qué l
 | `task_mesh_n2` | Esporádica | `T_min = 50 ms` | `D = 150 ms` | **Firm RT** | **11** | 4096 | `xQueue` urgente de alertas + retransmisiones ACK | Envío de disparo no iniciado antes de 150 ms |
 | `task_hb_metrics_n2` | Periódica | `T = 15 s` | `D = 1000 ms` | Soft RT | **3** | 3072 | `xTimer` + TWDT feed | Retraso envío heartbeat > 1 s |
 
-### 2.3 Nodo 3 — Climatización (`ESP32-C6 SuperMini`)
+### 2.3 Nodo 3 — Climatización y Alertas Térmicas (`ESP32-C6 SuperMini`)
 
 | Tarea / ISR | Tipo | Período `T` / `T_min` | Deadline `D` | Criticidad | Prio | Stack (B) | IPC / Primitivas | Condición de *Deadline Miss* |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `task_fan_ctrl` | Esporádica | Evento lectura / cmd Mesh | `D = 50 ms` (cambio PWM `LEDC`) | **Firm RT** | **11** | 3072 | `xQueue` comandos + `Mutex` configuración umbral | Tiempo hasta `ledc_update_duty()` > 50 ms |
-| `task_mesh_n3` | Esporádica | `T_min = 50 ms` | `D = 200 ms` | Soft RT | **9** | 4096 | `xQueue` telemetría / comandos | Demora despacho BLE Mesh > 200 ms |
+| `task_temp_alert` | Esporádica | Evento lectura / cmd umbral | `D = 50 ms` (evaluación sobresalto + RGB/Notify) | **Firm RT** | **11** | 3072 | `xQueue` lecturas + `Mutex` NVS umbral | Tiempo desde recepción de lectura hasta evaluación > 50 ms |
 | `task_dht11_rmt` | Periódica | `T = 3000 ms` | `D = 500 ms` (jitter máx. permitido `±50 ms`) | Soft RT | **6** | 3072 | Canal **RMT** hardware (sin busy-wait) + `vTaskDelayUntil` | `|t_real - t_esperado| > 50 ms` (jitter) o ciclo > 500 ms |
 | `task_hb_metrics_n3` | Periódica | `T = 15 s` | `D = 1000 ms` | Soft RT | **3** | 3072 | `xTimer` + TWDT feed | Retraso envío heartbeat > 1 s |
 
-### 2.4 Gateway / Border Router (`ESP32-S3 N16R8 UNO` — Dual Core)
+### 2.4 Gateway / Maestro BLE GATT (`ESP32-S3 N16R8 UNO` — Dual Core)
 
 | Tarea / Sistema | Núcleo | Tipo | Período / Evento | Deadline `D` | Criticidad | Prio | Stack (B) | IPC / Primitivas | Condición de *Deadline Miss* |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| BLE Mesh + Wi-Fi + LwIP + `esp_coex` | **Core 0** | Sistema | Asíncrono / Radio | Según stack | Sistema | 18–23 | — | Colas internas + árbitro `esp_coex` | Pérdida de slot BLE/Wi-Fi |
-| `task_mesh_bridge_s3` | **Core 0** | Esporádica | Eventos BLE Mesh | `D = 100 ms` | **Firm RT** | **14** | 5120 | Callbacks BLE Mesh ↔ `xQueue` inter-núcleo hacia Core 1 | Encolado hacia Core 1 > 100 ms |
+| NimBLE Host + Wi-Fi + LwIP + `esp_coex` | **Core 0** | Sistema | Asíncrono / Radio | Según stack | Sistema | 18–23 | — | Colas internas + árbitro `esp_coex` | Pérdida de slot BLE/Wi-Fi |
+| `task_ble_central_s3` | **Core 0** | Esporádica | Eventos Notify/Write GATT | `D = 100 ms` | **Firm RT** | **14** | 5120 | Callbacks NimBLE ↔ `xQueue` inter-núcleo hacia Core 1 | Encolado hacia Core 1 > 100 ms |
 | `task_state_fsm_s3` | **Core 1** | Esporádica | Eventos Mesh + Telegram | `D = 100 ms` | **Firm RT** | **12** | 4096 | `xQueue` unificada + `Mutex` tabla de estado global + `xTimer` offline (45 s) | Actualización de estado > 100 ms |
 | `task_tg_tx` | **Core 1** | Esporádica | Cola `PRIO_URGENT` / `PRIO_NORMAL` | `D_urgent = 3000 ms` | Soft RT | **8** | 8192 | `xQueue` doble (urgente primero) + `Mutex` HTTPS / `keep-alive` | Alerta urgente Telegram > 3000 ms (con Wi-Fi activo) |
 | `task_tg_rx` | **Core 1** | Periódica / Blocking | *Long Polling* `getUpdates` (25 s) | `D = 30 s` | Soft RT | **5** | 8192 | `esp_http_client` + `cJSON` (buffers en Octal PSRAM) | Bloqueo de polling sin recuperación > 35 s |
@@ -116,8 +115,8 @@ Al invocar `/metricas` (o pulsar el botón en `/panel`), el Gateway S3 consulta 
 | # | Experimento | Qué se mide | Condición de prueba | Propósito académico |
 | :--- | :--- | :--- | :--- | :--- |
 | **E1** | **WCRT local en Nodo 2** | `t_led_on - t_pir_isr` (µs) | 50 disparos PIR con alarma `ARMADA` | Validar cumplimiento estricto de `D = 10 ms` (Firm RT) |
-| **E2** | **Interacción directa C6 ↔ C6** | Tiempo desde lectura RFID en N1 hasta cambio de LED alarma en N2 | Realizar con S3 encendido y con **S3 apagado** | Demostrar desarme directo vía `0xC001` e independencia del Gateway |
-| **E3** | **BLE Mesh 1 salto vs. 2 saltos + Coexistencia** | Latencia `N3 → S3` (`hops = 0` vs. `hops >= 1` con `/mesh demo_hop on`) | Repetir **sin Wi-Fi/Telegram** y **con tráfico HTTPS Telegram activo** | Cuantificar overhead del *Relay* y efecto de la radio compartida (`esp_coex`) en S3 |
+| **E2** | **Coordinación en estrella (`N1 → S3 → N2`)** | Tiempo desde lectura RFID en N1 hasta cambio de LED alarma en N2 | Realizar **sin Wi-Fi / sin Internet** (solo estrella BLE) | Demostrar funcionamiento estilo carro offline independiente de Internet |
+| **E3** | **Latencia BLE GATT + Coexistencia** | Latencia `C6 → S3` (Notify `0xFF11`) y `S3 → C6` (Write `0xFF12`) | Repetir **sin Wi-Fi/Telegram** y **con tráfico HTTPS Telegram activo** | Cuantificar efecto de la radio compartida (`esp_coex`) en S3 |
 | **E4** | **Latencia Extremo a Extremo (Telegram)** | Tiempo `PIR → mensaje en grupo` y `/cerradura abrir → LED N1` | 20 repeticiones en red primaria y en hotspot de respaldo | Evaluar rendimiento QoS IoT completo (Soft RT) |
 | **E5** | **Jitter de tarea periódica (DHT11 RMT)** | `|T_real - 3000 ms|` y tiempo de lectura RMT | Registro continuo durante 10 minutos | Demostrar que RMT evita bloqueos del planificador FreeRTOS |
 | **E6** | **Resiliencia Offline y Watchdog (TWDT)** | Comportamiento al desconectar router Wi-Fi + inyección de bucle infinito (`while(1)`) | Medir recuperación NVS y continuidad local | Validar tolerancia a fallos IoT y recuperación automática TWDT |

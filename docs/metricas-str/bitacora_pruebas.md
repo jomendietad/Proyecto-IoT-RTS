@@ -10,8 +10,8 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 | :--- | :--- | :--- | :--- |
 | **Fase 2 — Nodo 2 (`nodo2_seguridad_c6`)** | `ESP32-C6-DevKitC-1` + PIR `HC-SR501` | **Validado en hardware** | Compilación + corrida continua `1022 s` |
 | **Fase 2 — Nodo 1 (`nodo1_acceso_c6`)** | `ESP32-C6-DevKitC-1` + `RFID-RC522` | **Validado en hardware** | Compilación + pruebas SPI, NVS y `BOOT` |
-| **Fase 2 — Nodo 3 (`nodo3_clima_c6`)** | `ESP32-C6 SuperMini` + `DHT11` | **Compilado (pendiente prueba física)** | `0x3a220` bytes, 0 warnings (`esp32c6`) |
-| **Fase 3 — Red BLE Mesh** | `3× ESP32-C6` + `ESP32-S3 N16R8 UNO` | Pendiente | — |
+| **Fase 2 — Nodo 3 (`nodo3_clima_c6`)** | `ESP32-C6 SuperMini` + `DHT11` | **Refactorizado y compilado (pendiente prueba física)** | Solo alertas térmicas (sin ventilador), 0 warnings (`esp32c6`) |
+| **Fase 3 — Red BLE GATT en Estrella** | `3× ESP32-C6` + `ESP32-S3 N16R8 UNO` | Pendiente | — |
 | **Fase 4 — Coexistencia + Telegram** | `ESP32-S3 N16R8 UNO` | Pendiente | — |
 
 ---
@@ -70,18 +70,18 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 
 ---
 
-### 3. Nodo 3 — Climatización (`nodo3_clima_c6`)
+### 3. Nodo 3 — Climatización / Alertas Térmicas (`nodo3_clima_c6`)
 
-- **Estado:** firmware implementado y compilado limpiamente para `esp32c6` (`0x3a220` bytes, 77 % libre, 0 warnings). **Pendiente de pruebas físicas en placa** (`ESP32-C6 SuperMini` + `DHT11` + LED PWM `LEDC`).
+- **Estado:** firmware refactorizado (eliminado el ventilador PWM `LEDC`, dejando únicamente alertas por sobresalto de temperatura `|ΔT| >= 2.0 °C` y umbral `>= 30 °C` con histéresis de `1.0 °C`) y compilado limpiamente para `esp32c6`. **Pendiente de pruebas físicas en placa** (`ESP32-C6 SuperMini` / `DevKitC-1` + `DHT11`).
 - **Puntos a registrar cuando se pruebe en placa:**
   - Lectura real del `DHT11` vía `RMT RX` (`GPIO 2`) sin errores de CRC/timeout.
   - Jitter periódico `dht11_jitter_us` (deadline `50,000 µs` sobre `T = 3,000 ms`).
-  - Transiciones `OFF / BAJA / MEDIA / ALTA` con histéresis de `1.0 °C` y control manual `fan`.
+  - Detección de sobresalto térmico (`|ΔT| >= 2.0 °C`), cruce de umbral `T_high` con histéresis de `1.0 °C` y persistencia de `/umbral` en NVS.
 
 ---
 
 ## Próximas Entradas (Fases 3 a 6)
 
-- **Fase 3:** registro de aprovisionamiento automático PB-ADV, interacción directa `0xC001` (Nodo 1 ↔ Nodo 2) y pruebas multi-salto (`/mesh demo_hop`).
+- **Fase 3:** registro de conexiones BLE GATT en estrella (`IOT-S3-MAESTRO` ↔ `IOT-N1-ACCESO`, `IOT-N2-SEGURIDAD`, `IOT-N3-CLIMA`), reconexión automática y enrutamiento local `N1 → S3 → N2`.
 - **Fase 4–5:** métricas de coexistencia Wi-Fi + BLE Mesh en ESP32-S3, tiempos de Telegram y prueba *offline*.
 - **Fase 6:** resultados consolidados de la matriz experimental `E1–E6`.

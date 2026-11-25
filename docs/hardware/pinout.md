@@ -10,8 +10,8 @@ Este documento define el mapeo definitivo de pines, criterios de selección de p
 | :--- | :--- | :--- |
 | **Nodo 1 — Acceso** | **ESP32-C6-DevKitC-1** | El lector RFID-RC522 requiere **5 señales SPI/control** (`SCK`, `MOSI`, `MISO`, `CS`, `RST`) más **1 GPIO** para el LED de cerradura (6 GPIOs externos). La DevKitC-1 expone todos los pines sin compromisos de strapping. |
 | **Nodo 2 — Seguridad** | **ESP32-C6-DevKitC-1** | Aunque el PIR HC-SR501 + LED de alarma requieren solo 2 GPIOs de aplicación, la DevKitC-1 entrega alimentación **5V estable** en su pin dedicado para el regulador del HC-SR501 y mayor comodidad de montaje en protoboard. |
-| **Nodo 3 — Climatización** | **ESP32-C6 SuperMini** | Es el nodo con **menor requerimiento de pines** (solo **2 GPIOs** externos: `DATA` del DHT11 y `PWM` del LED ventilador), ambos operando a **3.3V**. Se adapta perfectamente al formato compacto de la SuperMini. |
-| **Gateway / Border Router** | **ESP32-S3 N16R8 (UNO)** | Cuenta con **16 MB Flash (`N16`)**, **8 MB Octal PSRAM (`R8`)**, doble núcleo a 240 MHz y radios BLE 5 + Wi-Fi para alojar Provisioner BLE Mesh + coexistencia Wi-Fi + mbedTLS/HTTPS de Telegram. |
+| **Nodo 3 — Climatización** | **ESP32-C6 SuperMini** | Es el nodo con **menor requerimiento de pines** (solo **1 GPIO** externo de señal: `DATA` del DHT11 a **3.3V**). Se adapta perfectamente al formato compacto de la SuperMini. |
+| **Gateway / Maestro BLE** | **ESP32-S3 N16R8 (UNO)** | Cuenta con **16 MB Flash (`N16`)**, **8 MB Octal PSRAM (`R8`)**, doble núcleo a 240 MHz y radios BLE 5 + Wi-Fi para alojar el Maestro BLE GATT (estrella) + coexistencia Wi-Fi + mbedTLS/HTTPS de Telegram. |
 
 > **Reglas globales de diseño físico:**
 > - **Sin buzzer:** la alarma tipo carro en Nodo 2 se señaliza exclusivamente por patrones temporales en su LED externo (y en el grupo de Telegram).
@@ -76,21 +76,20 @@ Antes de asignar periféricos en las 3 placas ESP32-C6, se excluyen los pines co
 
 ### 3.3 Nodo 3 — Climatización (`ESP32-C6 SuperMini`)
 
-**Periféricos:** Sensor **DHT11** (temperatura/humedad) + **LED Ventilador DC** (PWM).
+**Periféricos:** Sensor **DHT11** (temperatura/humedad para alertas por sobresalto térmico).
 
 | Señal / Componente | GPIO ESP32-C6 | Dirección / Periférico | Notas eléctricas y de firmware |
 | :--- | :--- | :--- | :--- |
-| **DHT11 `DATA`** | **`GPIO 2`** | Bidireccional (`RMT` TX/RX) | Lectura no bloqueante usando periférico hardware **RMT** cada **2–5 s**. Requiere resistencia *pull-up* de **4.7 kΩ – 10 kΩ** a `3.3V` (si el módulo PCB de 3 pines ya la trae integrada, no añadir otra). |
-| **LED Ventilador DC** | **`GPIO 3`** | Salida PWM (`LEDC`) | Frecuencia **5 kHz**, resolución **10 bits** (0–1023) + resistencia **220 Ω – 330 Ω** a `GND`. Niveles: `OFF` (0 %), `BAJA` (~35 %), `MEDIA` (~70 %), `ALTA` (100 %). |
-| LED RGB integrado | **`GPIO 8`** | Salida (`RMT` / `led_strip`) | Indicador de estado BLE Mesh *(nota: verificar polaridad/revisión de la placa SuperMini en Fase 2; algunas revisiones traen WS2812 en GPIO 8 y otras un LED azul simple en GPIO 15)*. |
-| Botón `BOOT` | **`GPIO 9`** | Entrada (Pull-up) | Mantener presionado ≥ 5 s → borra NVS BLE Mesh + reinicia |
+| **DHT11 `DATA`** | **`GPIO 2`** | Bidireccional (`RMT` TX/RX) | Lectura no bloqueante usando periférico hardware **RMT** cada **3 s**. Requiere resistencia *pull-up* de **4.7 kΩ – 10 kΩ** a `3.3V` (si el módulo PCB de 3 pines ya la trae integrada, no añadir otra). |
+| LED RGB integrado | **`GPIO 8`** | Salida (`RMT` / `led_strip`) | Indicador de estado BLE GATT y alerta térmica activa (rojo intenso). |
+| Botón `BOOT` | **`GPIO 9`** | Entrada (Pull-up) | Mantener presionado ≥ 5 s → borra NVS + reinicia. |
 | Alimentación DHT11 | **`3V3` / `GND`** | Alimentación | Alimentar a **3.3V** para mantener niveles lógicos compatibles sin divisor resistivo. |
 
 ---
 
-### 3.4 Gateway / Border Router (`ESP32-S3 N16R8` formato UNO)
+### 3.4 Gateway / Maestro BLE GATT (`ESP32-S3 N16R8` formato UNO)
 
-La placa **ESP32-S3 N16R8 en formato Arduino UNO** no conecta sensores de campo; actúa exclusivamente como **Provisioner BLE Mesh**, **Coordinador de estado**, **Gateway Wi-Fi** y **Cliente HTTPS del Bot de Telegram**.
+La placa **ESP32-S3 N16R8 en formato Arduino UNO** no conecta sensores de campo; actúa exclusivamente como **Maestro/Central BLE GATT (topología estrella)**, **Coordinador de estado**, **Gateway Wi-Fi** y **Cliente HTTPS del Bot de Telegram**.
 
 | Recurso / Pin | GPIO ESP32-S3 | Función | Notas de configuración |
 | :--- | :--- | :--- | :--- |
@@ -118,12 +117,12 @@ La placa **ESP32-S3 N16R8 en formato Arduino UNO** no conecta sensores de campo;
 
 Todas las placas comparten un esquema visual coherente en su LED RGB integrado para diagnóstico rápido en campo y durante la sustentación:
 
-| Color / Patrón RGB | Significado en Nodos ESP32-C6 (1, 2 y 3) | Significado en Gateway ESP32-S3 |
+| Color / Patrón RGB | Significado en Nodos ESP32-C6 (1, 2 y 3) | Significado en Maestro ESP32-S3 |
 | :--- | :--- | :--- |
-| **Rojo fijo** | Nodo sin aprovisionar (`Unprovisioned Beacon` activo) | Error crítico o sin nodos conectados / fallo NVS |
-| **Azul parpadeante** | Proceso de aprovisionamiento PB-ADV en curso | Escaneando / aprovisionando nodos o conectando Wi-Fi |
-| **Ámbar / Amarillo parpadeante** | *(No aplica salvo advertencia de cola/TX)* | BLE Mesh OK, pero **Wi-Fi o Telegram desconectado** (modo offline) |
-| **Verde fijo (o pulso suave cada 5 s)** | Aprovisionado y conectado a la malla BLE Mesh | **Sistema 100 % operativo:** BLE Mesh + Wi-Fi + Telegram activos |
-| **Cian destello breve** | Transmisión / recepción de trama BLE Mesh | Procesando comando desde Telegram o enviando reporte |
-| **Rojo intermitente rápido** | En Nodo 2: refuerzo visual de alarma `DISPARADA` | Alarma global en estado `DISPARADA` |
+| **Rojo fijo (`DISCONNECTED`)** | Esperando conexión del Maestro S3 (Advertising BLE activo) | Error crítico o sin ningún periférico conectado |
+| **Azul parpadeante (`CONNECTING`)** | Emparejamiento / descubrimiento GATT en curso | Escaneando / conectando periféricos C6 o conectando Wi-Fi |
+| **Ámbar / Amarillo (`WIFI_OFFLINE`)** | *(No aplica)* | Estrella BLE operativa, pero **Wi-Fi o Telegram desconectado** (modo offline) |
+| **Verde fijo (`CONNECTED`)** | Conectado al Maestro S3 por BLE GATT (`0xFF10`) | **Sistema 100 % operativo:** 3× C6 conectados + Wi-Fi + Telegram activos |
+| **Cian destello breve (`ACTIVITY`)** | Transmisión / recepción de evento o comando GATT | Procesando comando desde Telegram o reenviando evento N1 ↔ N2 |
+| **Rojo intermitente rápido (`ALARM_TRIGGERED`)** | En Nodo 2: alarma `DISPARADA` \| En Nodo 3: alerta térmica activa | Alarma global en estado `DISPARADA` o alerta térmica crítica |
 | **Morado fijo (durante 5 s)** | Botón `BOOT` mantenido: preparando *Factory Reset* de NVS | Botón `BOOT` mantenido: preparando *Factory Reset* de NVS |
