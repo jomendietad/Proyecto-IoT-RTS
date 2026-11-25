@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "pir_sensor.c"
+        "alarm_fsm.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        common_types
+        mesh_protocol
+        esp_driver_gpio
+        esp_timer
+        nvs_flash
+        esp_system
+        freertos
+)
