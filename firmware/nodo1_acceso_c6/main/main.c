@@ -12,7 +12,7 @@
 #include "boot_button.h"
 #include "iot_common_types.h"
 #include "lock_ctrl.h"
-#include "mesh_protocol.h"
+#include "ble_protocol.h"
 #include "rc522_spi.h"
 #include "rfid_store_nvs.h"
 #include "status_led.h"
@@ -42,23 +42,23 @@ static void process_rfid_event(const uint8_t *uid, uint8_t uid_len, int64_t t_re
         const uint32_t lat_us = (uint32_t)(esp_timer_get_time() - t_read_us);
         str_metrics_record(&s_metrics, "rfid_to_lock_us", lat_us, RFID_DEADLINE_US, false);
 
-        mesh_lock_status_t lock_pkt = {
+        ble_lock_status_t lock_pkt = {
             .seq_num = ++s_seq,
             .lock_state = (uint8_t)new_lock,
-            .source = MESH_LOCK_SRC_RFID_VALID,
+            .source = BLE_LOCK_SRC_RFID_VALID,
             .uid_len = uid_len,
         };
         memcpy(lock_pkt.uid, uid, uid_len);
 
         const iot_alarm_state_t target_alarm =
             (new_lock == LOCK_STATE_ABIERTA) ? ALARM_STATE_DESARMADA : ALARM_STATE_ARMADA;
-        mesh_alarm_set_t alarm_pkt = {
+        ble_alarm_set_t alarm_pkt = {
             .seq_num = ++s_seq,
             .target_state = (uint8_t)target_alarm,
-            .source = MESH_SRC_RFID_C6_DIRECT,
+            .source = BLE_SRC_RFID_NODO1,
         };
 
-        ESP_LOGI(TAG, "RFID %s AUTORIZADO [%s] -> Cerradura=%s | Mesh 0xC001: OP_ALARM_SET(%s) seq=%u",
+        ESP_LOGI(TAG, "RFID %s AUTORIZADO [%s] -> Cerradura=%s | GATT Notify: OP_ALARM_SET(%s) seq=%u",
                  is_sim ? "(SIM)" : "(SPI)",
                  uid_str,
                  iot_lock_state_str(new_lock),
@@ -66,13 +66,13 @@ static void process_rfid_event(const uint8_t *uid, uint8_t uid_len, int64_t t_re
                  alarm_pkt.seq_num);
         (void)lock_pkt;
     } else {
-        mesh_rfid_auth_fail_t fail_pkt = {
+        ble_rfid_auth_fail_t fail_pkt = {
             .seq_num = ++s_seq,
             .uid_len = uid_len,
             .local_attempt_hint = 1,
         };
         memcpy(fail_pkt.uid, uid, uid_len);
-        ESP_LOGW(TAG, "RFID %s RECHAZADO [%s] -> Mesh 0xC001: OP_RFID_AUTH_FAIL seq=%u",
+        ESP_LOGW(TAG, "RFID %s RECHAZADO [%s] -> GATT Notify: OP_RFID_AUTH_FAIL seq=%u",
                  is_sim ? "(SIM)" : "(SPI)", uid_str, fail_pkt.seq_num);
     }
 }

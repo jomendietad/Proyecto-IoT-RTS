@@ -6,7 +6,7 @@
 #include "esp_timer.h"
 #include "freertos/semphr.h"
 #include "freertos/timers.h"
-#include "mesh_protocol.h"
+#include "ble_protocol.h"
 #include "pir_sensor.h"
 #include "status_led.h"
 
@@ -106,9 +106,9 @@ static void start_pattern_triggered(void)
     xTimerStart(s_blink_timer, 0);
 }
 
-static void log_alarm_mesh_event(iot_alarm_state_t st, iot_alarm_reason_t reason, uint32_t lat_us)
+static void log_alarm_ble_event(iot_alarm_state_t st, iot_alarm_reason_t reason, uint32_t lat_us)
 {
-    const mesh_alarm_event_t pkt = {
+    const ble_alarm_event_t pkt = {
         .seq_num = ++s_seq,
         .new_state = (uint8_t)st,
         .reason = (uint8_t)reason,
@@ -116,7 +116,7 @@ static void log_alarm_mesh_event(iot_alarm_state_t st, iot_alarm_reason_t reason
         .fail_counter = s_fail_counter,
         .flags = pir_sensor_is_active() ? 0x01U : 0x00U,
     };
-    ESP_LOGI(TAG, "FSM -> %s (reason=%u fail=%u lat=%" PRIu32 "us) | Mesh 0xC001: OP_ALARM_EVENT seq=%u",
+    ESP_LOGI(TAG, "FSM -> %s (reason=%u fail=%u lat=%" PRIu32 "us) | GATT Notify: OP_ALARM_EVENT seq=%u",
              iot_alarm_state_str(st), pkt.reason, pkt.fail_counter, pkt.local_latency_us, pkt.seq_num);
 }
 
@@ -136,7 +136,7 @@ static void task_alarm_fsm(void *arg)
                 xSemaphoreGive(s_state_mutex);
 
                 status_led_set_state(STATUS_LED_UNPROVISIONED);
-                log_alarm_mesh_event(ALARM_STATE_DESARMADA, ALARM_REASON_CMD_TG, 0);
+                log_alarm_ble_event(ALARM_STATE_DESARMADA, ALARM_REASON_CMD_TG, 0);
             }
 
             if (bits & ALARM_EVT_CMD_ARM) {
@@ -146,7 +146,7 @@ static void task_alarm_fsm(void *arg)
                     s_fail_counter = 0;
                     start_pattern_armed();
                     xSemaphoreGive(s_state_mutex);
-                    log_alarm_mesh_event(ALARM_STATE_ARMADA, ALARM_REASON_CMD_TG, 0);
+                    log_alarm_ble_event(ALARM_STATE_ARMADA, ALARM_REASON_CMD_TG, 0);
                 } else {
                     xSemaphoreGive(s_state_mutex);
                 }
@@ -164,7 +164,7 @@ static void task_alarm_fsm(void *arg)
 
                     status_led_set_state(STATUS_LED_ALARM_TRIGGERED);
                     str_metrics_record(s_metrics, "pir_to_led_us", lat_us, ALARM_DEADLINE_US, false);
-                    log_alarm_mesh_event(ALARM_STATE_DISPARADA, ALARM_REASON_PIR_MOTION, lat_us);
+                    log_alarm_ble_event(ALARM_STATE_DISPARADA, ALARM_REASON_PIR_MOTION, lat_us);
                 } else {
                     const iot_alarm_state_t cur = s_state;
                     xSemaphoreGive(s_state_mutex);
@@ -181,7 +181,7 @@ static void task_alarm_fsm(void *arg)
                         start_pattern_triggered();
                         xSemaphoreGive(s_state_mutex);
                         status_led_set_state(STATUS_LED_ALARM_TRIGGERED);
-                        log_alarm_mesh_event(ALARM_STATE_DISPARADA, ALARM_REASON_RFID_3_FAILS, 0);
+                        log_alarm_ble_event(ALARM_STATE_DISPARADA, ALARM_REASON_RFID_3_FAILS, 0);
                     } else {
                         const uint8_t cur_fails = s_fail_counter;
                         xSemaphoreGive(s_state_mutex);
