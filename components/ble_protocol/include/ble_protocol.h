@@ -11,6 +11,7 @@ extern "C" {
 /* ============================================================================
  * Identificación BLE GATT en estrella (NimBLE)
  * ============================================================================ */
+#define BLE_ADV_NAME_GATEWAY      "IOT-S3-MAESTRO"
 #define BLE_ADV_NAME_NODO1        "IOT-N1-ACCESO"
 #define BLE_ADV_NAME_NODO2        "IOT-N2-SEGURIDAD"
 #define BLE_ADV_NAME_NODO3        "IOT-N3-CLIMA"
@@ -20,6 +21,7 @@ extern "C" {
 #define BLE_GATT_CHR_CMD_RX_UUID  0xFF12U /**< Write with Response: Maestro S3 -> C6 */
 
 #define BLE_PROTO_VERSION         0x01U
+#define BLE_PROTO_MAX_FRAME_LEN   96U
 
 #define BLE_NODE_ID_GATEWAY_S3      0x0001U
 #define BLE_NODE_ID_NODO1_ACCESO    0x0010U
@@ -118,6 +120,21 @@ typedef struct __attribute__((packed)) {
     uint8_t uid[IOT_RFID_UID_MAX_LEN];
 } ble_rfid_mgmt_t;
 _Static_assert(sizeof(ble_rfid_mgmt_t) == 10, "ble_rfid_mgmt_t debe medir 10 bytes");
+
+typedef struct __attribute__((packed)) {
+    uint8_t uid_len;
+    uint8_t uid[IOT_RFID_UID_MAX_LEN];
+} ble_rfid_card_wire_t;
+_Static_assert(sizeof(ble_rfid_card_wire_t) == 8, "ble_rfid_card_wire_t debe medir 8 bytes");
+
+typedef struct __attribute__((packed)) {
+    uint8_t seq_num;
+    uint8_t action; /**< ble_rfid_action_t */
+    uint8_t status; /**< 0=OK, 1=ERR_INVALID, 2=ERR_FULL, 3=ERR_NOT_FOUND */
+    uint8_t count;  /**< 0..IOT_RFID_MAX_CARDS */
+    ble_rfid_card_wire_t cards[IOT_RFID_MAX_CARDS];
+} ble_rfid_mgmt_ack_t;
+_Static_assert(sizeof(ble_rfid_mgmt_ack_t) == 68, "ble_rfid_mgmt_ack_t debe medir 68 bytes");
 
 typedef struct __attribute__((packed)) {
     uint8_t seq_num;

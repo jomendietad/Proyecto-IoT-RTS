@@ -1,8 +1,12 @@
 idf_component_register(
     SRCS
         "src/ble_protocol.c"
+        "src/ble_peripheral.c"
     INCLUDE_DIRS
         "include"
     REQUIRES
         common_types
+    PRIV_REQUIRES
+        bt
+        freertos
 )
