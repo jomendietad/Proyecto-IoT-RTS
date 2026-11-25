@@ -20,6 +20,11 @@ typedef enum {
     STATUS_LED_FACTORY_RESET,   /**< Morado */
 } status_led_state_t;
 
+/* Alias semánticos para topología BLE GATT en estrella */
+#define STATUS_LED_DISCONNECTED STATUS_LED_UNPROVISIONED
+#define STATUS_LED_CONNECTING   STATUS_LED_PROVISIONING
+#define STATUS_LED_CONNECTED    STATUS_LED_ONLINE
+
 /**
  * @brief Inicializa el canal RMT TX para el LED WS2812 integrado.
  */

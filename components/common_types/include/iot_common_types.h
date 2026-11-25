@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 
-/** @brief Identificador de rol del nodo en la malla BLE Mesh. */
+/** @brief Identificador de rol del nodo en la red Bluetooth en estrella. */
 typedef enum {
     NODE_ROLE_GATEWAY   = 0,
     NODE_ROLE_ACCESO    = 1,
@@ -36,28 +36,23 @@ typedef enum {
     LOCK_STATE_ABIERTA = 1,
 } iot_lock_state_t;
 
-/** @brief Modo de operación del ventilador emulado. */
+/** @brief Estado de alerta térmica por sobresalto / umbral en Nodo 3. */
 typedef enum {
-    FAN_MODE_MANUAL = 0,
-    FAN_MODE_AUTO   = 1,
-} iot_fan_mode_t;
-
-/** @brief Niveles PWM discretos del ventilador. */
-typedef enum {
-    FAN_LEVEL_OFF   = 0,
-    FAN_LEVEL_BAJA  = 1,
-    FAN_LEVEL_MEDIA = 2,
-    FAN_LEVEL_ALTA  = 3,
-} iot_fan_level_t;
+    TEMP_ALERT_NORMAL = 0,
+    TEMP_ALERT_HIGH   = 1, /**< Superó T_high (con histéresis de 1.0 °C al bajar) */
+    TEMP_ALERT_SPIKE  = 2, /**< Cambio brusco |ΔT| >= 2.0 °C entre lecturas */
+    TEMP_ALERT_BOTH   = 3, /**< Ambos criterios activos simultáneamente */
+} iot_temp_alert_t;
 
 #define IOT_RFID_UID_MAX_LEN         7U
 #define IOT_RFID_MAX_CARDS           8U
 #define IOT_RFID_FAIL_TRIGGER_COUNT  3U
 
-#define IOT_FAN_TBASE_DEFAULT_C      25U
-#define IOT_FAN_TBASE_MIN_C          15U
-#define IOT_FAN_TBASE_MAX_C          40U
-#define IOT_FAN_HYSTERESIS_DECI_C    10
+#define IOT_TEMP_THRESH_DEFAULT_C    30U
+#define IOT_TEMP_THRESH_MIN_C        15U
+#define IOT_TEMP_THRESH_MAX_C        50U
+#define IOT_TEMP_HYSTERESIS_DECI_C   10
+#define IOT_TEMP_SPIKE_DELTA_DECI_C  20
 
 #define IOT_HEARTBEAT_PERIOD_MS      15000U
 #define IOT_TWDT_TIMEOUT_MS          10000U
@@ -77,19 +72,14 @@ static inline const char *iot_lock_state_str(iot_lock_state_t s)
     return (s == LOCK_STATE_ABIERTA) ? "ABIERTA" : "CERRADA";
 }
 
-static inline const char *iot_fan_mode_str(iot_fan_mode_t m)
+static inline const char *iot_temp_alert_str(iot_temp_alert_t a)
 {
-    return (m == FAN_MODE_AUTO) ? "AUTO" : "MANUAL";
-}
-
-static inline const char *iot_fan_level_str(iot_fan_level_t l)
-{
-    switch (l) {
-    case FAN_LEVEL_OFF:   return "OFF";
-    case FAN_LEVEL_BAJA:  return "BAJA";
-    case FAN_LEVEL_MEDIA: return "MEDIA";
-    case FAN_LEVEL_ALTA:  return "ALTA";
-    default:              return "DESCONOCIDO";
+    switch (a) {
+    case TEMP_ALERT_NORMAL: return "NORMAL";
+    case TEMP_ALERT_HIGH:   return "UMBRAL_ALTO";
+    case TEMP_ALERT_SPIKE:  return "SOBRESALTO";
+    case TEMP_ALERT_BOTH:   return "UMBRAL_Y_SOBRESALTO";
+    default:                return "DESCONOCIDA";
     }
 }
 
