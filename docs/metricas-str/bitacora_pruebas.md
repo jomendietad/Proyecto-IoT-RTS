@@ -6,11 +6,13 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 
 ## Resumen de Estado por Nodo y Fase
 
+> **Fase 2 — Completada:** los 3 nodos `ESP32-C6` (`nodo1_acceso_c6`, `nodo2_seguridad_c6` y `nodo3_clima_c6`) quedaron validados en hardware real con métricas STR dentro de deadline (`misses=0`).
+
 | Componente / Fase | Placa / Hardware | Estado | Última verificación |
 | :--- | :--- | :--- | :--- |
 | **Fase 2 — Nodo 2 (`nodo2_seguridad_c6`)** | `ESP32-C6-DevKitC-1` + PIR `HC-SR501` | **Validado en hardware** | Compilación + corrida continua `1022 s` |
 | **Fase 2 — Nodo 1 (`nodo1_acceso_c6`)** | `ESP32-C6-DevKitC-1` + `RFID-RC522` | **Validado en hardware** | Compilación + pruebas SPI, NVS y `BOOT` |
-| **Fase 2 — Nodo 3 (`nodo3_clima_c6`)** | `ESP32-C6 SuperMini` + `DHT11` | **Refactorizado y compilado (pendiente prueba física)** | Solo alertas térmicas (sin ventilador), 0 warnings (`esp32c6`) |
+| **Fase 2 — Nodo 3 (`nodo3_clima_c6`)** | `ESP32-C6 SuperMini` + `DHT11` | **Validado en hardware** | Compilación + corrida inicial `186 s` + corrida post-fix `75 s` sin errores |
 | **Fase 3 — Red BLE GATT en Estrella** | `3× ESP32-C6` + `ESP32-S3 N16R8 UNO` | Pendiente | — |
 | **Fase 4 — Coexistencia + Telegram** | `ESP32-S3 N16R8 UNO` | Pendiente | — |
 
@@ -72,16 +74,51 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 
 ### 3. Nodo 3 — Climatización / Alertas Térmicas (`nodo3_clima_c6`)
 
-- **Estado:** firmware refactorizado (eliminado el ventilador PWM `LEDC`, dejando únicamente alertas por sobresalto de temperatura `|ΔT| >= 2.0 °C` y umbral `>= 30 °C` con histéresis de `1.0 °C`) y compilado limpiamente para `esp32c6`. **Pendiente de pruebas físicas en placa** (`ESP32-C6 SuperMini` / `DevKitC-1` + `DHT11`).
-- **Puntos a registrar cuando se pruebe en placa:**
-  - Lectura real del `DHT11` vía `RMT RX` (`GPIO 2`) sin errores de CRC/timeout.
-  - Jitter periódico `dht11_jitter_us` (deadline `50,000 µs` sobre `T = 3,000 ms`).
-  - Detección de sobresalto térmico (`|ΔT| >= 2.0 °C`), cruce de umbral `T_high` con histéresis de `1.0 °C` y persistencia de `/umbral` en NVS.
+- **Hardware probado:** `ESP32-C6 SuperMini` (`ESP32-C6FH4`, `rev v0.2`, `160 MHz`, `ESP-IDF v6.1.1`, consola `USB Serial/JTAG`) + sensor `DHT11` en `GPIO 2` (`RMT RX` a `1 MHz`) + botón `BOOT` `GPIO 9`.
+
+#### Corrida 1 (`186 s`) — Validación inicial e incidencia en `dht11_rmt.c`
+- **Duración de corrida continua observada:** **`186 s`** (métricas periódicas consolidadas hasta `uptime_s=180`, sin reinicios ni disparos del TWDT).
+- **Incidencia detectada y corregida en driver `dht11_rmt.c`:** durante la conexión inicial ocurrieron lecturas `ESP_ERR_INVALID_RESPONSE` antes de estabilizarse tras reinicio; se corrigió eliminando el glitch inicial en `GPIO 2`, ampliando el pulso de inicio a `22 ms` y `signal_range_max_ns` a `300 µs`, moviendo el buffer RMT a memoria estática y añadiendo recuperación automática (`rmt_disable`/`rmt_enable`) ante timeout o `ESP_ERR_INVALID_STATE`.
+- **Resultados funcionales verificados:**
+  - **Lectura física continua del `DHT11` vía `RMT RX` (`GPIO 2`):** lecturas periódicas cada `3,000 ms` reportando `sensor=OK` (`T = 29.0 °C – 34.6 °C`, `H = 89% – 95%`).
+  - **Detección simultánea de umbral superior y sobresalto térmico:** ante calentamiento rápido del sensor se activó `ALERTA TERMICA [UMBRAL_Y_SOBRESALTO]` en `T=30.3 °C (dT=+2.8 °C) H=95%` (`seq=1`) y `T=33.0 °C (dT=+2.7 °C) H=89%` (`seq=2`), preparando notificaciones `OP_CLIMA_TELEMETRY`.
+  - **Comando `status`:** verificado reportando estado real del sensor (`T=34.6C (dT=-0.1C) H=95% sensor=OK alerta=UMBRAL_ALTO T_high=30C`).
+  - **Gestión dinámica del umbral con persistencia en NVS:** comando `umbral 50` actualizado en NVS (`ALERTA TERMICA [NORMAL]` en `T=29.0 °C`, `reason=3`, `seq=3`) y restauración posterior a `umbral 30`.
+
+| Métrica (Corrida 1 — `186 s`) | Valor observado | Límite / Referencia | Resultado |
+| :--- | :--- | :--- | :--- |
+| Jitter periódico `dht11_jitter_us` (`T = 3,000 ms`) | **`102 µs – 970 µs`** (`avg_jit_us=969 µs` en corrida estable) | `D = 50,000 µs` (50 ms) | **OK (`misses=0`)** |
+| Latencia evaluación alerta `temp_alert_eval_us` | **`13 µs – 18 µs`** (`max_lat_us=18 µs`) | `D = 50,000 µs` (50 ms) | **OK (`misses=0`)** |
+| Heap libre (`free_heap` / `min_heap`) | `447,088 B` / `442,012 B` | Estable en `180 s` | **Sin fugas** |
+| Uso de CPU (`IDLE`) | **`99%`** | — | **Holgado** |
+| Stack libre mínimo (`task_temp_alert`) | `1,820 B` (de `3,072 B`) | ≥ 25 % libre | **OK** |
+| Stack libre mínimo (`task_dht11_rmt`) | `2,308 B` (de `3,072 B`) | ≥ 25 % libre | **OK** |
+| Stack libre mínimo (`task_hb_n3`) | `2,304 B` (de `3,072 B`) | ≥ 25 % libre | **OK** |
+| Stack libre mínimo (`task_console_n3`) | `3,228 B` (de `4,096 B`) | ≥ 25 % libre | **OK** |
+
+#### Corrida 2 (`75 s`, post-fix) — Validación sin errores tras corrección en `dht11_rmt.c`
+- **Duración de corrida continua observada:** **`75 s`** desde el primer arranque tras flashear el driver corregido, sin reinicios, sin errores de lectura y sin disparos del TWDT.
+- **Resultados funcionales verificados:**
+  - **Enganche inmediato del `DHT11` desde el arranque:** primera lectura física exitosa en `t = 3.256 s` (`T=25.8C (dT=+0.0C) H=72% sensor=OK alerta=NORMAL T_high=30C`), manteniendo lecturas cada `3,000 ms` sin ningún `ESP_ERR_INVALID_RESPONSE`, timeout ni error de CRC.
+  - **Detección de sobresalto térmico (`[SOBRESALTO]`):** disparo en `T=27.9 °C (dT=+2.1 °C) H=95% T_high=30C reason=2` (`seq=1`), antes de alcanzar el umbral de `30 °C`.
+  - **Detección combinada (`[UMBRAL_Y_SOBRESALTO]`):** disparo en `T=31.6 °C (dT=+2.2 °C) H=95% T_high=30C reason=2` (`seq=2`).
+  - **Retorno automático por histéresis (`1.0 °C`):** transición a `ALERTA TERMICA [NORMAL]` en `T=28.9 °C (dT=-0.2 °C) H=95% T_high=30C reason=3` (`seq=3`).
+
+| Métrica (Corrida 2 post-fix — `75 s`) | Valor observado | Límite / Referencia | Resultado |
+| :--- | :--- | :--- | :--- |
+| Jitter periódico `dht11_jitter_us` (`T = 3,000 ms`) | **`196 µs`** constante (`avg_jit_us=196 µs`) | `D = 50,000 µs` (50 ms) | **OK (`misses=0`)** |
+| Latencia evaluación alerta `temp_alert_eval_us` | **`14 µs`** (`max_lat_us=14 µs`) | `D = 50,000 µs` (50 ms) | **OK (`misses=0`)** |
+| Heap libre (`free_heap` / `min_heap`) | `446,840 B` / `441,904 B` | Estable en `75 s` | **Sin fugas** |
+| Uso de CPU (`IDLE`) | **`99%`** | — | **Holgado** |
+| Stack libre mínimo (`task_temp_alert`) | `2,296 B` (de `3,072 B`) | ≥ 25 % libre | **OK** |
+| Stack libre mínimo (`task_dht11_rmt`) | `2,344 B` (de `3,072 B`) | ≥ 25 % libre | **OK** |
+| Stack libre mínimo (`task_hb_n3`) | `2,336 B` (de `3,072 B`) | ≥ 25 % libre | **OK** |
+| Stack libre mínimo (`task_console_n3`) | `3,312 B` (de `4,096 B`) | ≥ 25 % libre | **OK** |
 
 ---
 
 ## Próximas Entradas (Fases 3 a 6)
 
 - **Fase 3:** registro de conexiones BLE GATT en estrella (`IOT-S3-MAESTRO` ↔ `IOT-N1-ACCESO`, `IOT-N2-SEGURIDAD`, `IOT-N3-CLIMA`), reconexión automática y enrutamiento local `N1 → S3 → N2`.
-- **Fase 4–5:** métricas de coexistencia Wi-Fi + BLE Mesh en ESP32-S3, tiempos de Telegram y prueba *offline*.
+- **Fase 4–5:** métricas de coexistencia Wi-Fi + BLE GATT en ESP32-S3, tiempos de Telegram y prueba *offline*.
 - **Fase 6:** resultados consolidados de la matriz experimental `E1–E6`.
