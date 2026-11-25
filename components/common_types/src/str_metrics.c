@@ -13,7 +13,7 @@ esp_err_t str_twdt_init(uint32_t timeout_ms)
 {
     const esp_task_wdt_config_t cfg = {
         .timeout_ms = timeout_ms,
-        .idle_core_mask = (1U << 0),
+        .idle_core_mask = (1U << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1U,
         .trigger_panic = true,
     };
 
