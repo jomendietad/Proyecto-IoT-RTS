@@ -1,0 +1,15 @@
+idf_component_register(
+    SRCS
+        "src/status_led.c"
+        "src/str_metrics.c"
+        "src/boot_button.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_driver_gpio
+        esp_driver_rmt
+        esp_timer
+        freertos
+        nvs_flash
+        esp_system
+)
