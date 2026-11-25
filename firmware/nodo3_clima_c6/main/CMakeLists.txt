@@ -1,0 +1,18 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "dht11_rmt.c"
+        "fan_pwm.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        common_types
+        mesh_protocol
+        esp_driver_gpio
+        esp_driver_rmt
+        esp_driver_ledc
+        esp_timer
+        nvs_flash
+        esp_system
+        freertos
+)
