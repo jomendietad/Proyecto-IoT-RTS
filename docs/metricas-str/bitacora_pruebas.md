@@ -6,7 +6,7 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 
 ## Resumen de Estado por Nodo y Fase
 
-> **Fases 2 y 3 — Completadas:** los 3 nodos `ESP32-C6` individuales y la red **BLE GATT en estrella** (`ESP32-S3` Maestro ↔ `3× ESP32-C6` Periféricos) quedaron validados en hardware real con métricas STR dentro de deadline (`misses=0`).
+> **Fases 1 a 6 — Completadas:** los 3 nodos `ESP32-C6`, la red **BLE GATT en estrella**, la coexistencia **Wi-Fi + BLE (`esp_coex`) + Bot de Telegram**, la validación integral y la matriz experimental **STR (`E1–E6`)** quedaron validadas en hardware real y procesadas con `tools/analyze_str_metrics.py`.
 
 | Componente / Fase | Placa / Hardware | Estado | Última verificación |
 | :--- | :--- | :--- | :--- |
@@ -16,6 +16,7 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 | **Fase 3 — Red BLE GATT en Estrella** | `3× ESP32-C6` + `ESP32-S3 N16R8 UNO` | **Validado en hardware** | Corrida continua `1782 s` (~30 min), reconexión `3/3` y ruta `N1→S3→N2` |
 | **Fase 4 — Coexistencia + Telegram** | `ESP32-S3 N16R8 UNO` + `3× ESP32-C6` | **Validado en hardware** | Octal PSRAM, `esp_coex`, failover dual Wi-Fi (`slot 0 ↔ slot 1`), `/panel` y comandos Telegram |
 | **Fase 5 — Integral, `/rfid` y Offline** | Sistema completo (`3× C6 + S3 + Telegram`) | **Validado en hardware** | Flujo completo, 3 fallos RFID, `/rfid` NVS, `/umbral`, sobresalto térmico, failover y reconexión `3/3` |
+| **Fase 6 — Mediciones STR (`E1–E6`)** | 4 placas + `tools/analyze_str_metrics.py` | **Validado en hardware** | Matriz `E1–E6`: `WCRT E1=40 µs`, `E3 ΔWCRT=+1.1%`, `E4 p50=665.6/822.4 ms`, `E5 10 min σ=1.9 µs` |
 
 ---
 
@@ -207,6 +208,27 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 
 ---
 
-## Próximas Entradas (Fase 6)
+## Fase 6 — Resultados Experimentales de Tiempo Real (`E1–E6`)
 
-- **Fase 6:** resultados consolidados de la matriz experimental `E1–E6` con scripts de análisis en `tools/`.
+Todos los experimentos fueron capturados directamente desde los puertos serie de las 4 placas (`/dev/ttyACM0` N1, `/dev/ttyACM1` N2, `/dev/ttyACM2` N3 y `/dev/ttyUSB0` S3) y procesados con [`tools/analyze_str_metrics.py`](../../tools/analyze_str_metrics.py).
+
+### Matriz consolidada de resultados (`E1–E5`)
+
+| Exp. | Nodo / Condición | Métrica | `N` | Min | Media | Desv.Est | `p50` | `p95` | `p99` | **WCRT (Max)** | Deadline | Misses | Cumplimiento |
+| :---: | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **E1** | **N2** — Disparo alarma (`arm→sim_pir`) | `pir_to_led_us` | `50` | `29 µs` | `33.6 µs` | `2.2 µs` | `33.0 µs` | `37.0 µs` | `39.5 µs` | **`40 µs`** | `10,000 µs` | **`0`** | **100.00%** |
+| **E2** | **N1** — Acceso local sin Wi-Fi | `rfid_to_lock_us` | `30` | `105 µs` | `123.8 µs` | `7.8 µs` | `125.0 µs` | `134.2 µs` | `137.4 µs` | **`138 µs`** | `50,000 µs` | **`0`** | **100.00%** |
+| **E2 / E3-A** | **S3** — Ruta `N1→S3→N2` **sin Wi-Fi** (`BLE=3/3`) | `s3_route_n1_to_n2_us` | `30` | `1,043 µs` | `3,558.7 µs` | `1,001.4 µs` | `3,975.5 µs` | `4,080.6 µs` | `4,104.7 µs` | **`4,105 µs`** | `100,000 µs` | **`0`** | **100.00%** |
+| **E3-B** | **N1** — Acceso local con Wi-Fi + Telegram | `rfid_to_lock_us` | `30` | `112 µs` | `126.5 µs` | `8.6 µs` | `125.5 µs` | `141.6 µs` | `143.4 µs` | **`144 µs`** | `50,000 µs` | **`0`** | **100.00%** |
+| **E3-B** | **S3** — Ruta `N1→S3→N2` **con Wi-Fi + HTTPS** | `s3_route_n1_to_n2_us` | `30` | `1,102 µs` | `3,353.2 µs` | `909.4 µs` | `3,732.5 µs` | `3,899.7 µs` | `4,104.6 µs` | **`4,149 µs`** | `100,000 µs` | **`0`** | **100.00%** |
+| **E4-A** | **S3** — Telegram red primaria (`slot 0`, ráfaga con `HTTP 429`) | `tg_alert_e2e_us` | `17` | `552.1 ms` | `2,178.5 ms` | `2,669.8 ms` | **`665.6 ms`** | `8,640.3 ms` | `8,994.8 ms` | `9,083.4 ms` | `3,000 ms` | `3` | `82.35%` |
+| **E4-B** | **S3** — Telegram hotspot (`slot 1`, `POCO X4 GT`, sin `429`) | `tg_alert_e2e_us` | `10` | `579.1 ms` | `1,402.2 ms` | `1,133.1 ms` | **`822.4 ms`** | `3,393.1 ms` | `3,920.8 ms` | `4,052.7 ms` | `3,000 ms` | `1` | `90.00%` |
+| **E5** | **N3** — Jitter DHT11 RMT (`10 min`, `T=3,000 ms`) | `dht11_jitter_us` | `201` | `512 µs` | `518.0 µs` | **`1.9 µs`** | `519.0 µs` | `519.0 µs` | `519.0 µs` | **`519 µs`** | `50,000 µs` | **`0`** | **100.00%** |
+
+### Análisis técnico clave (`E3`, `E4`, `E5` y `E6`)
+- **Impacto de coexistencia Wi-Fi + BLE (`E3`):** al comparar `s3_route_n1_to_n2_us` sin Wi-Fi (`WCRT = 4,105 µs`) frente a Wi-Fi + tráfico HTTPS Telegram activo (`WCRT = 4,149 µs`), la variación en el peor caso fue de solo **`+1.1 %`** (`0 misses`, `~24×` por debajo de `D = 100 ms`), demostrando la efectividad del **Core Pinning** (Core 0 radio/coexistencia; Core 1 FSM/Telegram) y la topología **BLE GATT en estrella**.
+- **Frontera Firm RT vs. Soft RT (`E1`, `E2`, `E3`, `E5` vs. `E4`):** todas las tareas críticas locales y de la estrella BLE cumplieron al **100.00 % (`0 misses`)**. En contraste, la ruta nube de Telegram (`E4`, clasificada como **Soft RT**) entregó una mediana de **`665.6 ms`** en red fija y **`822.4 ms`** en hotspot móvil, pero experimentó picos `> 3,000 ms` cuando la API externa aplicó *rate-limiting* de grupo (`HTTP 429`, 20 msg/min) o variabilidad celular.
+- **Determinismo del periférico RMT (`E5`):** durante `10 min` continuos (`201` ciclos de `3,000 ms`, `uptime = 1,080 s`), `task_dht11_rmt` registró un jitter de **`518.0 ± 1.9 µs`** (`WCRT = 519 µs`, `~96×` bajo el límite de `50 ms`), validando la ausencia de bloqueos del planificador FreeRTOS.
+- **Resiliencia offline y supervisión TWDT (`E6`):**
+  - Con `WiFi=OFFLINE` (`failovers=2`), el Maestro S3 mantuvo **`BLE=3/3`** y completó `30/30` enrutamientos `N1 → S3 → N2` sin degradación (`uptime = 1,753 s`, `min_heap = 8,259,416 B` estable sin fugas; `N1 min_heap = 356,212 B`; `N2 min_heap = 366,168 B`; `N3 min_heap = 371,260 B`).
+  - El **Task Watchdog Timer (`TWDT = 10 s`, `panic=on`)** permaneció activo en las 4 placas durante toda la jornada experimental (`~30 min` continuos) con `0` disparos inesperados y márgenes de stack libres ≥ 25 % en todas las tareas críticas (`task_alarm_fsm=3,180 B`, `task_rfid_poll=3,468 B`, `task_dht11_rmt=2,332 B`, `task_state_fsm_s3=1,552 B`, `task_tg_tx=4,332 B`, `task_tg_rx=4,340 B`, `task_wifi_sup=2,684 B`).

@@ -149,8 +149,6 @@ Proyecto-IoT-RTS/
 └── tools/                                    # Scripts Python para procesar logs [STR_METRIC]
 ```
 
-*(Los directorios `gateway_s3_uno/` y `tools/` mantienen archivos `.gitkeep` temporales hasta incorporar su código en las próximas fases).*
-
 ---
 
 ## 8. Plan de Acción por Fases
@@ -165,5 +163,5 @@ Proyecto-IoT-RTS/
   - Configurar Octal PSRAM (`N16R8`), `esp_coex`, *Core Pinning* (Core 0/Core 1), failover dual Wi-Fi (`secrets.h`), *Long Polling* HTTPS (`keep-alive`), comandos de texto y `/panel` *Inline Keyboard*.
 - [x] **Fase 5 — Lógica integral, gestión `/rfid` y pruebas en modo offline/degradado** *(Completada: flujo integral, `/rfid` NVS, `/umbral`, sobresalto térmico, failover dual y reconexión `3/3` validados en placa)*
   - Validar flujo completo de alarma (incluidos 3 fallos RFID), alertas por sobresalto de temperatura, alta/baja remota de tarjetas en NVS y operación en estrella sin Internet.
-- [ ] **Fase 6 — Mediciones de Tiempo Real (E1–E6) y documentación de resultados**
+- [x] **Fase 6 — Mediciones de Tiempo Real (E1–E6) y documentación de resultados** *(Completada: herramienta `tools/analyze_str_metrics.py`, matriz `E1–E6` medida en hardware real y resultados consolidados en `docs/metricas-str/bitacora_pruebas.md`)*
   - Recolectar logs `[STR_METRIC]`, procesar percentiles/WCRT/jitter en `tools/`, registrar resultados de coexistencia en `docs/metricas-str/` y consolidar entregas de **IoT** y **STR**.
