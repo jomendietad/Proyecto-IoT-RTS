@@ -14,6 +14,32 @@
 extern "C" {
 #endif
 
+/** @brief Snapshot del enlace y ultimos reportes recibidos de un nodo C6. */
+typedef struct {
+    bool connected;
+    bool offline_warned;
+    ble_heartbeat_t hb;
+    ble_metrics_report_t metrics;
+    bool has_hb;
+    bool has_metrics;
+} star_node_snapshot_t;
+
+/** @brief Snapshot atomico del estado global consolidado en el Maestro S3. */
+typedef struct {
+    star_node_snapshot_t nodes[3];
+    iot_lock_state_t lock_state;
+    iot_alarm_state_t alarm_state;
+    uint8_t alarm_fail_cnt;
+    bool pir_active;
+    int16_t temp_deci_c;
+    int16_t delta_deci_c;
+    uint8_t humidity_pct;
+    iot_temp_alert_t temp_alert;
+    uint8_t t_high_c;
+    bool clima_valid;
+    bool wifi_online;
+} star_global_snapshot_t;
+
 esp_err_t star_coordinator_init(str_metrics_ctx_t *metrics, TaskHandle_t *out_fsm_task);
 
 void star_coordinator_on_ble_rx(iot_node_role_t role,
@@ -24,6 +50,14 @@ void star_coordinator_on_ble_rx(iot_node_role_t role,
                                 void *ctx);
 
 void star_coordinator_on_node_state(iot_node_role_t role, bool ready, void *ctx);
+
+void star_coordinator_set_wifi_online(bool online);
+
+void star_coordinator_get_snapshot(star_global_snapshot_t *out);
+
+bool star_parse_uid_hex(const char *hex, uint8_t *out_uid, uint8_t *out_len);
+
+void star_format_uid_hex(const uint8_t *uid, uint8_t len, char *out, size_t out_sz);
 
 esp_err_t star_cmd_alarm(iot_alarm_state_t target);
 

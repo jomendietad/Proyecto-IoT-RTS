@@ -1,4 +1,3 @@
-#include <ctype.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,45 +17,43 @@
 #include "star_coordinator.h"
 #include "status_led.h"
 #include "str_metrics.h"
+#include "telegram_bot.h"
+#include "wifi_manager.h"
 
 static const char *TAG = "gateway_s3";
 
 static str_metrics_ctx_t s_metrics;
-static TaskHandle_t s_h_fsm = NULL;
-static TaskHandle_t s_h_hb = NULL;
-static TaskHandle_t s_h_console = NULL;
+static TaskHandle_t s_task_handles[6] = { NULL };
+static const char *const s_task_names[6] = {
+    "task_state_fsm_s3",
+    "task_tg_tx",
+    "task_tg_rx",
+    "task_wifi_sup",
+    "task_hb_s3",
+    "task_console_s3",
+};
 
-static bool parse_uid_hex(const char *hex, uint8_t *out_uid, uint8_t *out_len)
+static void get_s3_tasks_cb(const TaskHandle_t **out_handles,
+                            const char *const **out_names,
+                            size_t *out_count)
 {
-    if (!hex || !out_uid || !out_len) {
-        return false;
+    if (out_handles) {
+        *out_handles = s_task_handles;
     }
-
-    uint8_t buf[IOT_RFID_UID_MAX_LEN] = { 0 };
-    uint8_t idx = 0;
-    const char *p = hex;
-
-    while (*p != '\0') {
-        while (*p == ' ' || *p == ':' || *p == '-') {
-            p++;
-        }
-        if (*p == '\0') {
-            break;
-        }
-        if (!isxdigit((unsigned char)p[0]) || !isxdigit((unsigned char)p[1]) || idx >= IOT_RFID_UID_MAX_LEN) {
-            return false;
-        }
-        char byte_str[3] = { p[0], p[1], '\0' };
-        buf[idx++] = (uint8_t)strtoul(byte_str, NULL, 16);
-        p += 2;
+    if (out_names) {
+        *out_names = s_task_names;
     }
-
-    if (idx != 4U && idx != 7U) {
-        return false;
+    if (out_count) {
+        *out_count = 6U;
     }
-    memcpy(out_uid, buf, idx);
-    *out_len = idx;
-    return true;
+}
+
+static void on_wifi_state_change(bool connected, const wifi_status_t *status, void *ctx)
+{
+    (void)status;
+    (void)ctx;
+    star_coordinator_set_wifi_online(connected);
+    telegram_bot_set_wifi_online(connected);
 }
 
 static void task_hb_metrics_s3(void *arg)
@@ -65,9 +62,7 @@ static void task_hb_metrics_s3(void *arg)
     esp_task_wdt_add(NULL);
 
     while (1) {
-        const TaskHandle_t handles[] = { s_h_fsm, s_h_hb, s_h_console };
-        const char *const names[] = { "task_state_fsm_s3", "task_hb_s3", "task_console_s3" };
-        str_metrics_log_health(&s_metrics, handles, names, 3);
+        str_metrics_log_health(&s_metrics, s_task_handles, s_task_names, 6U);
 
         for (int i = 0; i < 3; i++) {
             esp_task_wdt_reset();
@@ -83,6 +78,23 @@ static void handle_console_line(const char *line)
         star_log_global_status();
     } else if (strcmp(line, "net") == 0 || strcmp(line, "red") == 0) {
         star_log_ble_network();
+    } else if (strcmp(line, "wifi") == 0) {
+        wifi_status_t wst;
+        wifi_manager_get_status(&wst);
+        ESP_LOGI(TAG, "Wi-Fi: cfg=%s state=%s slot=%u ssid='%s' ip=%s rssi=%d dBm failovers=%" PRIu32,
+                 wst.configured ? "SI" : "NO",
+                 wst.connected ? "ONLINE" : "OFFLINE",
+                 (unsigned int)wst.active_slot,
+                 wst.ssid[0] ? wst.ssid : "-",
+                 wst.ip[0] ? wst.ip : "-",
+                 wst.rssi,
+                 wst.failovers);
+    } else if (strcmp(line, "failover") == 0) {
+        ESP_LOGI(TAG, "CMD -> failover Wi-Fi (%s)", esp_err_to_name(wifi_manager_force_failover()));
+    } else if (strcmp(line, "panel") == 0) {
+        ESP_LOGI(TAG, "CMD -> /panel (%s)", esp_err_to_name(telegram_bot_send_panel()));
+    } else if (strncmp(line, "tg ", 3) == 0) {
+        ESP_LOGI(TAG, "CMD -> tg send (%s)", esp_err_to_name(telegram_bot_send(TG_PRIO_NORMAL, line + 3)));
     } else if (strcmp(line, "arm") == 0) {
         ESP_LOGI(TAG, "CMD -> /armar (%s)", esp_err_to_name(star_cmd_alarm(ALARM_STATE_ARMADA)));
     } else if (strcmp(line, "disarm") == 0) {
@@ -96,7 +108,7 @@ static void handle_console_line(const char *line)
     } else if (strncmp(line, "rfid add ", 9) == 0) {
         uint8_t uid[IOT_RFID_UID_MAX_LEN];
         uint8_t len = 0;
-        if (!parse_uid_hex(line + 9, uid, &len)) {
+        if (!star_parse_uid_hex(line + 9, uid, &len)) {
             ESP_LOGW(TAG, "UID invalido. Usa 4 o 7 bytes hex (ej: rfid add A1B2C3D4)");
         } else {
             ESP_LOGI(TAG, "CMD -> /rfid add (%s)", esp_err_to_name(star_cmd_rfid(BLE_RFID_ACT_ADD, uid, len)));
@@ -104,7 +116,7 @@ static void handle_console_line(const char *line)
     } else if (strncmp(line, "rfid del ", 9) == 0) {
         uint8_t uid[IOT_RFID_UID_MAX_LEN];
         uint8_t len = 0;
-        if (!parse_uid_hex(line + 9, uid, &len)) {
+        if (!star_parse_uid_hex(line + 9, uid, &len)) {
             ESP_LOGW(TAG, "UID invalido.");
         } else {
             ESP_LOGI(TAG, "CMD -> /rfid del (%s)", esp_err_to_name(star_cmd_rfid(BLE_RFID_ACT_DEL, uid, len)));
@@ -114,15 +126,11 @@ static void handle_console_line(const char *line)
         ESP_LOGI(TAG, "CMD -> /umbral %d (%s)", val, esp_err_to_name(star_cmd_threshold((uint8_t)val)));
     } else if (strcmp(line, "metrics") == 0) {
         star_cmd_request_status_all(0x02U);
-        const TaskHandle_t handles[] = { s_h_fsm, s_h_hb, s_h_console };
-        const char *const names[] = { "task_state_fsm_s3", "task_hb_s3", "task_console_s3" };
-        str_metrics_log_health(&s_metrics, handles, names, 3);
+        str_metrics_log_health(&s_metrics, s_task_handles, s_task_names, 6U);
     } else if (strcmp(line, "stats") == 0) {
-        const TaskHandle_t handles[] = { s_h_fsm, s_h_hb, s_h_console };
-        const char *const names[] = { "task_state_fsm_s3", "task_hb_s3", "task_console_s3" };
-        str_metrics_log_health(&s_metrics, handles, names, 3);
+        str_metrics_log_health(&s_metrics, s_task_handles, s_task_names, 6U);
     } else if (line[0] != '\0') {
-        ESP_LOGI(TAG, "Comandos S3: status | net | arm | disarm | lock open|close | rfid list|add|del | umbral <C> | metrics | stats");
+        ESP_LOGI(TAG, "Comandos S3: status | net | wifi | failover | panel | tg <msg> | arm | disarm | lock open|close | rfid list|add|del | umbral <C> | metrics | stats");
     }
 }
 
@@ -132,7 +140,7 @@ static void task_console_s3(void *arg)
     char buf[96];
     size_t idx = 0;
 
-    ESP_LOGI(TAG, "Consola S3 lista (Core %d). Comandos: status, net, arm, disarm, lock open|close, rfid list|add|del, umbral <C>, metrics",
+    ESP_LOGI(TAG, "Consola S3 lista (Core %d). Comandos: status, net, wifi, failover, panel, tg <msg>, arm, disarm, lock open|close, rfid list|add|del, umbral <C>, metrics",
              xPortGetCoreID());
     while (1) {
         int ch = getchar();
@@ -168,7 +176,7 @@ void app_main(void)
     status_led_set_state(STATUS_LED_DISCONNECTED);
     ESP_ERROR_CHECK(boot_button_init((gpio_num_t)CONFIG_GW_BOOT_GPIO, NULL));
 
-    ESP_ERROR_CHECK(star_coordinator_init(&s_metrics, &s_h_fsm));
+    ESP_ERROR_CHECK(star_coordinator_init(&s_metrics, &s_task_handles[0]));
 
     const ble_central_cfg_t ble_cfg = {
         .on_rx = star_coordinator_on_ble_rx,
@@ -177,6 +185,10 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(ble_central_star_init(&ble_cfg));
 
-    xTaskCreatePinnedToCore(task_hb_metrics_s3, "task_hb_s3", 3072, NULL, 3, &s_h_hb, 1);
-    xTaskCreatePinnedToCore(task_console_s3, "task_console_s3", 4096, NULL, 2, &s_h_console, 1);
+    ESP_ERROR_CHECK(telegram_bot_init(&s_metrics, get_s3_tasks_cb,
+                                      &s_task_handles[1], &s_task_handles[2]));
+    ESP_ERROR_CHECK(wifi_manager_init(on_wifi_state_change, NULL, &s_task_handles[3]));
+
+    xTaskCreatePinnedToCore(task_hb_metrics_s3, "task_hb_s3", 3072, NULL, 3, &s_task_handles[4], 1);
+    xTaskCreatePinnedToCore(task_console_s3, "task_console_s3", 4096, NULL, 2, &s_task_handles[5], 1);
 }
