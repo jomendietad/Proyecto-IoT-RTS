@@ -29,7 +29,7 @@ Antes de asignar periféricos en las 3 placas ESP32-C6, se excluyen los pines co
 | `GPIO 12`, `GPIO 13` | USB Serial / JTAG nativo (D− / D+) | **Prohibido usar** (reservados para consola/flasheo USB) |
 | `GPIO 16`, `GPIO 17` | UART0 (`TX0`, `RX0`) | **Reservados** para depuración UART estándar |
 | `GPIO 4`, `GPIO 5`, `GPIO 15` | Pines de *Strapping* (junto a `GPIO 8` y `GPIO 9`) | Evitar cargas que fijen estado lógico durante el reset |
-| `GPIO 8` | LED RGB direccionable integrado (`WS2812`) + *Strapping* | Uso exclusivo para **LED RGB de estado BLE Mesh** |
+| `GPIO 8` | LED RGB direccionable integrado (`WS2812`) + *Strapping* | Uso exclusivo para **LED RGB de estado BLE GATT** |
 | `GPIO 9` | Botón `BOOT` integrado + *Strapping* (pull-up interno) | Uso exclusivo para **botón Factory Reset (5 s)** |
 
 ---
@@ -48,8 +48,8 @@ Antes de asignar periféricos en las 3 placas ESP32-C6, se excluyen los pines co
 | RC522 `SDA (CS)` | **`GPIO 18`** | Salida (`SPI2_CS0`) | Chip Select activo en bajo |
 | RC522 `RST` | **`GPIO 19`** | Salida Digital | Reset hardware del módulo MFRC522 |
 | **LED Cerradura** | **`GPIO 20`** | Salida Digital | Ánodo al GPIO → resistencia **220 Ω – 330 Ω** → LED → `GND`. `HIGH` = Cerradura ABIERTA, `LOW` = Cerradura CERRADA |
-| LED RGB integrado | **`GPIO 8`** | Salida (`RMT` / `led_strip`) | Indicador de estado BLE Mesh |
-| Botón `BOOT` | **`GPIO 9`** | Entrada (Pull-up) | Mantener presionado ≥ 5 s → borra NVS BLE Mesh + reinicia |
+| LED RGB integrado | **`GPIO 8`** | Salida (`RMT` / `led_strip`) | Indicador de estado BLE GATT |
+| Botón `BOOT` | **`GPIO 9`** | Entrada (Pull-up) | Mantener presionado ≥ 5 s → borra NVS (restaura UID por defecto) + reinicia |
 | Alimentación RC522 | **`3V3` / `GND`** | Alimentación | **ADVERTENCIA:** el RC522 opera **estrictamente a 3.3V**. No conectar a `5V` bajo ninguna circunstancia (daño permanente al chip MFRC522). |
 
 ---
@@ -62,8 +62,8 @@ Antes de asignar periféricos en las 3 placas ESP32-C6, se excluyen los pines co
 | :--- | :--- | :--- | :--- |
 | **PIR HC-SR501 `OUT`** | **`GPIO 3`** | Entrada Digital (`ISR`) | Configurado con `GPIO_INTR_POSEDGE` y *pull-down* interno. La salida lógica del HC-SR501 es **3.3V** (segura para ESP32-C6). |
 | **LED Alarma** | **`GPIO 20`** | Salida Digital (`xTimer`) | Ánodo al GPIO → resistencia **220 Ω – 330 Ω** → LED → `GND`. Ejecuta patrones de alarma automotriz (`DESARMADA`, `ARMADA`, `DISPARADA`). |
-| LED RGB integrado | **`GPIO 8`** | Salida (`RMT` / `led_strip`) | Indicador de estado BLE Mesh |
-| Botón `BOOT` | **`GPIO 9`** | Entrada (Pull-up) | Mantener presionado ≥ 5 s → borra NVS BLE Mesh + reinicia |
+| LED RGB integrado | **`GPIO 8`** | Salida (`RMT` / `led_strip`) | Indicador de estado BLE GATT |
+| Botón `BOOT` | **`GPIO 9`** | Entrada (Pull-up) | Mantener presionado ≥ 5 s → borra NVS + reinicia |
 | Alimentación PIR | **`5V` / `GND`** | Alimentación | El módulo HC-SR501 usa un regulador lineal interno HT7133 que requiere **5V en `VCC`** para trabajar sin falsos disparos. |
 
 #### Calibración obligatoria del HC-SR501 antes de pruebas STR
@@ -93,7 +93,7 @@ La placa **ESP32-S3 N16R8 en formato Arduino UNO** no conecta sensores de campo;
 
 | Recurso / Pin | GPIO ESP32-S3 | Función | Notas de configuración |
 | :--- | :--- | :--- | :--- |
-| Botón `BOOT` | **`GPIO 0`** | Entrada (Pull-up) | Mantener presionado ≥ 5 s → limpia NVS BLE Mesh (y fuerza re-aprovisionamiento de la red si se desea). |
+| Botón `BOOT` | **`GPIO 0`** | Entrada (Pull-up) | Mantener presionado ≥ 5 s → limpia partición NVS + reinicia el Gateway. |
 | LED RGB integrado | **`GPIO 48`** *(o `GPIO 38` según rev.)* | Salida (`RMT`) | Confirmar en el esquemático/serigrafía de la placa UNO exacta y dejar configurable vía `Kconfig` (`menuconfig`). |
 | Bus Octal PSRAM (`R8`) | `GPIO 33 – GPIO 37` | Interno (Octal SPI) | **PROHIBIDO USAR:** conectados internamente a los 8 MB de Octal PSRAM. |
 | Bus Flash SPI (`N16`) | `GPIO 26 – GPIO 32` | Interno (Quad/Octal SPI) | **PROHIBIDO USAR:** conectados internamente a los 16 MB de Flash. |
@@ -108,7 +108,7 @@ La placa **ESP32-S3 N16R8 en formato Arduino UNO** no conecta sensores de campo;
   - `CONFIG_SPIRAM=y`
   - `CONFIG_SPIRAM_MODE_OCT=y`
 - Política de ubicación en memoria:
-  - **Octal PSRAM:** buffers de sesión **mbedTLS**, búferes HTTP de Telegram (`esp_http_client`), parseo JSON (`cJSON`) y colas no críticas.
+  - **Octal PSRAM:** buffers de sesión **mbedTLS**, búferes HTTP de Telegram (`esp_http_client`), parseo/construcción JSON en C puro y colas no críticas.
   - **SRAM interna:** stacks de todas las tareas críticas FreeRTOS, rutinas ISR, estructuras del controlador BLE/Wi-Fi y colas de mensajería rápida.
 
 ---

@@ -12,7 +12,7 @@ En la asignatura de Sistemas en Tiempo Real es fundamental justificar por qué l
 1. **Planificación preventiva determinista de prioridades fijas (*Fixed-Priority Preemptive Scheduling*):** FreeRTOS implementa exactamente 25 niveles de prioridad (configurables vía `configMAX_PRIORITIES`) con despacho $O(1)$ mediante mapa de bits por hardware/arquitectura. Esto permite aplicar directamente asignación de prioridades tipo **Rate Monotonic (RM)** y por **criticidad temporal** sin capas intermedias de abstracción.
 2. **Prevención de inversión de prioridad:** el uso de `xSemaphoreCreateMutex()` activa nativamente el protocolo de **Herencia de Prioridad (*Priority Inheritance*)**, garantizando acotar el tiempo de bloqueo cuando una tarea de alta prioridad y otra de baja comparten recursos (por ejemplo, el bus SPI o la tabla de estado global).
 3. **Notificaciones directas de latencia mínima (`xTaskNotifyFromISR`):** para el disparo del sensor PIR en Nodo 2, la ISR despierta la tarea de alarma mediante notificación directa al TCB de la tarea, evitando la copia en memoria y el overhead de una cola clásica (~45 % más rápido según documentación oficial de FreeRTOS).
-4. **Aislamiento físico por núcleos (*Core Pinning* SMP en ESP32-S3):** mediante `xTaskCreatePinnedToCore()`, el Gateway ESP32-S3 confina las pilas asíncronas de radio (**BLE Mesh + Wi-Fi + LwIP + `esp_coex`**) al **Core 0**, aislando el **Core 1** para la máquina de estados global, la cola prioritaria de alertas y las transacciones bloqueantes TLS/HTTPS con Telegram.
+4. **Aislamiento físico por núcleos (*Core Pinning* SMP en ESP32-S3):** mediante `xTaskCreatePinnedToCore()`, el Gateway ESP32-S3 confina las pilas asíncronas de radio (**NimBLE GATT + Wi-Fi + LwIP + `esp_coex`**) al **Core 0**, aislando el **Core 1** para la máquina de estados global, la cola prioritaria de alertas y las transacciones bloqueantes TLS/HTTPS con Telegram.
 5. **Determinismo de periféricos críticos y coexistencia probada:**
    - En el Nodo 3, el **DHT11** exige pulsos del orden de **20–80 µs**. Usar *bit-banging* por CPU deshabilitando interrupciones destruye el determinismo de FreeRTOS; en ESP-IDF se utiliza el **periférico hardware RMT**, que captura los flancos por memoria dedicada sin bloquear la CPU ni alterar el planificador.
    - En el ESP32-S3, la coexistencia **Wi-Fi + BLE (NimBLE)** depende directamente del árbitro de hardware/software `esp_coex` y del soporte maduro de **Octal PSRAM (`N16R8`)**, ambos integrados y validados nativamente por Espressif en ESP-IDF v6.1.1. Usar **BLE GATT en estrella sobre NimBLE** en lugar de BLE Mesh elimina las ventanas continuas de escaneo/reenvío *Relay*, reduciendo la contención con el tráfico Wi-Fi HTTPS.
@@ -38,19 +38,19 @@ En la asignatura de Sistemas en Tiempo Real es fundamental justificar por qué l
 
 | Tarea / ISR | Tipo | Período `T` / `T_min` | Deadline `D` | Criticidad | Prio | Stack (B) | IPC / Primitivas | Condición de *Deadline Miss* |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `task_rfid_poll` | Periódica | `T = 100 ms` | `D = 50 ms` (detección → LED cerradura) | **Firm RT** | **12** | 4096 | `SPI2` + `Mutex` NVS + `xQueue` hacia Mesh | Tiempo `(fin validación + LED) - (lectura UID)` > 50 ms |
-| `task_mesh_n1` | Esporádica | `T_min = 50 ms` | `D = 150 ms` (cmd `/cerradura` → LED) | **Firm RT** | **10** | 4096 | `xQueue` RX/TX + `OP_VENDOR_ACK` | Tiempo desde `rx_cb` hasta actualización LED > 150 ms |
-| `task_boot_btn_n1` | Esporádica | `T = 100 ms` | `D = 200 ms` | Soft RT | **4** | 2048 | Polling antirrebote GPIO 9 / `xTimer` | No aplica (supervisión usuario) |
-| `task_hb_metrics_n1` | Periódica | `T = 15 s` | `D = 1000 ms` | Soft RT | **3** | 3072 | `xTimer` + TWDT feed | Retraso envío heartbeat > 1 s |
+| `task_rfid_poll` | Periódica | `T = 100 ms` | `D = 50 ms` (detección → LED cerradura) | **Firm RT** | **12** | 4096 | `SPI2` + `Mutex` NVS + notificación GATT (`0xFF11`) | Tiempo `(fin validación + LED) - (lectura UID)` > 50 ms |
+| `task_ble_n1` | Esporádica | `T_min = 50 ms` | `D = 150 ms` (cmd `/cerradura` → LED) | **Firm RT** | **10** | 4096 | `xQueue` RX/TX + `OP_PROTO_ACK` / `OP_RFID_MGMT_ACK` | Tiempo desde `rx_cb` hasta actualización LED > 150 ms |
+| `task_boot_btn` | Esporádica | `T = 100 ms` | `D = 200 ms` | Soft RT | **4** | 2048 | Polling antirrebote GPIO 9 / `xTimer` | No aplica (supervisión usuario) |
+| `task_hb_n1` | Periódica | `T = 15 s` | `D = 1000 ms` | Soft RT | **3** | 3072 | `xTimer` + TWDT feed | Retraso envío heartbeat > 1 s |
 
 ### 2.2 Nodo 2 — Seguridad e Intrusión (`ESP32-C6-DevKitC-1`)
 
 | Tarea / ISR | Tipo | Período `T` / `T_min` | Deadline `D` | Criticidad | Prio | Stack (B) | IPC / Primitivas | Condición de *Deadline Miss* |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `pir_gpio_isr` | **ISR** | Esporádica (`T_min ≥ 500 ms`) | `D < 100 µs` | **Hard/Firm RT** | ISR | — | `xTaskNotifyFromISR` + captura `t_isr = esp_timer_get_time()` | Latencia de despacho ISR > 100 µs |
-| `task_alarm_fsm` | Esporádica | Evento PIR / Mesh / `xTimer` | **`D = 10 ms`** (ISR → LED encendido + enqueue TX) | **Firm RT** | **16** | 4096 | `ulTaskNotifyTake` + `xTimer` (patrón LED 100/150 ms) + `Mutex` estado | `(t_led_on - t_isr) > 10 ms` |
-| `task_mesh_n2` | Esporádica | `T_min = 50 ms` | `D = 150 ms` | **Firm RT** | **11** | 4096 | `xQueue` urgente de alertas + retransmisiones ACK | Envío de disparo no iniciado antes de 150 ms |
-| `task_hb_metrics_n2` | Periódica | `T = 15 s` | `D = 1000 ms` | Soft RT | **3** | 3072 | `xTimer` + TWDT feed | Retraso envío heartbeat > 1 s |
+| `task_alarm_fsm` | Esporádica | Evento PIR / BLE GATT / `xTimer` | **`D = 10 ms`** (ISR → LED encendido + enqueue TX) | **Firm RT** | **16** | 4096 | `ulTaskNotifyTake` + `xTimer` (patrón LED 100/150 ms) + `Mutex` estado | `(t_led_on - t_isr) > 10 ms` |
+| `task_ble_n2` | Esporádica | `T_min = 50 ms` | `D = 150 ms` | **Firm RT** | **11** | 4096 | `xQueue` urgente de alertas + `OP_ALARM_EVENT` | Envío de disparo no iniciado antes de 150 ms |
+| `task_hb_n2` | Periódica | `T = 15 s` | `D = 1000 ms` | Soft RT | **3** | 3072 | `xTimer` + TWDT feed | Retraso envío heartbeat > 1 s |
 
 ### 2.3 Nodo 3 — Climatización y Alertas Térmicas (`ESP32-C6 SuperMini`)
 
@@ -58,18 +58,18 @@ En la asignatura de Sistemas en Tiempo Real es fundamental justificar por qué l
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `task_temp_alert` | Esporádica | Evento lectura / cmd umbral | `D = 50 ms` (evaluación sobresalto + RGB/Notify) | **Firm RT** | **11** | 3072 | `xQueue` lecturas + `Mutex` NVS umbral | Tiempo desde recepción de lectura hasta evaluación > 50 ms |
 | `task_dht11_rmt` | Periódica | `T = 3000 ms` | `D = 500 ms` (jitter máx. permitido `±50 ms`) | Soft RT | **6** | 3072 | Canal **RMT** hardware (sin busy-wait) + `vTaskDelayUntil` | `|t_real - t_esperado| > 50 ms` (jitter) o ciclo > 500 ms |
-| `task_hb_metrics_n3` | Periódica | `T = 15 s` | `D = 1000 ms` | Soft RT | **3** | 3072 | `xTimer` + TWDT feed | Retraso envío heartbeat > 1 s |
+| `task_hb_n3` | Periódica | `T = 15 s` | `D = 1000 ms` | Soft RT | **3** | 3072 | `xTimer` + TWDT feed | Retraso envío heartbeat > 1 s |
 
 ### 2.4 Gateway / Maestro BLE GATT (`ESP32-S3 N16R8 UNO` — Dual Core)
 
 | Tarea / Sistema | Núcleo | Tipo | Período / Evento | Deadline `D` | Criticidad | Prio | Stack (B) | IPC / Primitivas | Condición de *Deadline Miss* |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | NimBLE Host + Wi-Fi + LwIP + `esp_coex` | **Core 0** | Sistema | Asíncrono / Radio | Según stack | Sistema | 18–23 | — | Colas internas + árbitro `esp_coex` | Pérdida de slot BLE/Wi-Fi |
-| `task_ble_central_s3` | **Core 0** | Esporádica | Eventos Notify/Write GATT | `D = 100 ms` | **Firm RT** | **14** | 5120 | Callbacks NimBLE ↔ `xQueue` inter-núcleo hacia Core 1 | Encolado hacia Core 1 > 100 ms |
-| `task_state_fsm_s3` | **Core 1** | Esporádica | Eventos Mesh + Telegram | `D = 100 ms` | **Firm RT** | **12** | 4096 | `xQueue` unificada + `Mutex` tabla de estado global + `xTimer` offline (45 s) | Actualización de estado > 100 ms |
-| `task_tg_tx` | **Core 1** | Esporádica | Cola `PRIO_URGENT` / `PRIO_NORMAL` | `D_urgent = 3000 ms` | Soft RT | **8** | 8192 | `xQueue` doble (urgente primero) + `Mutex` HTTPS / `keep-alive` | Alerta urgente Telegram > 3000 ms (con Wi-Fi activo) |
-| `task_tg_rx` | **Core 1** | Periódica / Blocking | *Long Polling* `getUpdates` (25 s) | `D = 30 s` | Soft RT | **5** | 8192 | `esp_http_client` + `cJSON` (buffers en Octal PSRAM) | Bloqueo de polling sin recuperación > 35 s |
-| `task_wifi_supervisor` | **Core 1** | Periódica / Evento | Monitoreo / Failover Wi-Fi | `D = 20 s` (conmutación red) | Soft RT | **4** | 4096 | `EventGroup` Wi-Fi + rotación red primaria/secundaria | No intenta failover tras pérdida |
+| `nimble_host` (`ble_central_star`) | **Core 0** | Esporádica | Eventos Notify/Write GATT | `D = 100 ms` | **Firm RT** | **14** | 5120 | Callbacks NimBLE ↔ `xQueue` inter-núcleo hacia Core 1 | Encolado hacia Core 1 > 100 ms |
+| `task_state_fsm_s3` | **Core 1** | Esporádica | Eventos BLE GATT + Telegram | `D = 100 ms` | **Firm RT** | **12** | 4096 | `xQueue` unificada + `Mutex` tabla de estado global + timeout offline (45 s) | Actualización de estado > 100 ms |
+| `task_tg_tx` | **Core 1** | Esporádica | Cola `PRIO_URGENT` / `PRIO_NORMAL` | `D_urgent = 3000 ms` | Soft RT | **8** | 8192 | `xQueue` doble (urgente primero) + `esp_http_client` (`keep-alive`) | Alerta urgente Telegram > 3000 ms (con Wi-Fi activo) |
+| `task_tg_rx` | **Core 1** | Periódica / Blocking | *Long Polling* `getUpdates` (15 s) | `D = 20 s` | Soft RT | **5** | 8192 | `esp_http_client` + parser JSON en C puro (buffers en Octal PSRAM) | Bloqueo de polling sin recuperación > 25 s |
+| `task_wifi_sup` | **Core 1** | Periódica / Evento | Monitoreo / Failover Wi-Fi | `D = 20 s` (conmutación red) | Soft RT | **4** | 4096 | `EventGroup` Wi-Fi + rotación red primaria/secundaria | No intenta failover tras pérdida |
 
 ---
 
@@ -81,9 +81,9 @@ En la asignatura de Sistemas en Tiempo Real es fundamental justificar por qué l
    - En el **ESP32-S3 N16R8**, todos los stacks de tareas críticas permanecen en **SRAM interna** (`MALLOC_CAP_INTERNAL`), destinando la **Octal PSRAM** (`MALLOC_CAP_SPIRAM`) a mbedTLS, certificados y payloads JSON de Telegram.
 2. **Task Watchdog Timer (TWDT):**
    - Habilitado en las 4 placas con timeout de **10 segundos** (`CONFIG_ESP_TASK_WDT_TIMEOUT_S=10`).
-   - Las tareas permanentes críticas alimentan explícitamente `esp_task_wdt_reset()` en su ciclo; un bloqueo infinito reinicia automáticamente el nodo afectado y su red BLE Mesh se recupera desde NVS.
+   - Las tareas permanentes críticas alimentan explícitamente `esp_task_wdt_reset()` en su ciclo; un bloqueo infinito reinicia automáticamente el nodo afectado y su enlace BLE GATT en estrella se reconecta automáticamente.
 3. **Detección de nodos offline (*Heartbeats*):**
-   - Cada C6 publica `OP_HEARTBEAT` cada **15 segundos** al grupo `0xC000`.
+   - Cada C6 notifica `OP_HEARTBEAT` cada **15 segundos** al Maestro S3 por GATT (`0xFF11`).
    - Si el Gateway S3 supera **45 segundos** (3 periodos perdidos) sin recibir señal de un nodo C6, lo marca como `OFFLINE` en `/estado` y notifica al grupo de Telegram (y vuelve a notificar al reconectarse).
 
 ---
@@ -99,15 +99,15 @@ Las placas imprimen métricas parseables por puerto serie siguiendo una sintaxis
 ```text
 [STR_METRIC] node=N2 metric=pir_to_led_us value_us=420 deadline_us=10000 miss=0
 [STR_METRIC] node=N3 metric=dht11_jitter_us value_us=3120 deadline_us=50000 miss=0
-[STR_METRIC] node=S3 metric=mesh_to_s3_us src=N3 hops=1 coex=1 value_us=18400 deadline_us=150000 miss=0
-[STR_METRIC] node=S3 metric=tg_alert_e2e_ms value_us=1420000 deadline_us=3000000 miss=0
+[STR_METRIC] node=S3 metric=s3_route_n1_to_n2_us value_us=3732 deadline_us=100000 miss=0
+[STR_METRIC] node=S3 metric=tg_alert_e2e_us value_us=1420000 deadline_us=3000000 miss=0
 ```
 
 ### Datos reportados en vivo por el comando `/metricas` en Telegram
 Al invocar `/metricas` (o pulsar el botón en `/panel`), el Gateway S3 consulta (`OP_STATUS_REQ` con flag de métricas) y consolida:
 - `max_crit_latency_us` y `deadline_misses` acumulados de Nodo 1, Nodo 2 y Nodo 3.
 - `avg_jitter_us` del muestreo periódico DHT11 (Nodo 3).
-- `hops` del último paquete recibido de cada C6.
+- Estado de enlace BLE (`RSSI`, `uptime_s`) y `min_stack_bytes` reportados por cada C6.
 - `% CPU` por tarea/núcleo (`vTaskGetRunTimeStats`), `min_stack_bytes` más ajustado y memoria libre (`SRAM interna` y `Octal PSRAM` en el S3).
 
 ### Matriz de experimentos para el informe final de IoT + STR

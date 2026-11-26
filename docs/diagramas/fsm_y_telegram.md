@@ -53,8 +53,8 @@ La alarma opera con **3 estados exactos** y **armado instantáneo** (sin estado 
 
 ### Acoplamiento en la estrella BLE GATT (`N1 → Maestro S3 → N2`) vs. Control independiente
 1. **Con tarjeta RFID autorizada en Nodo 1 (estilo carro completo):**
-   - Si la cerradura estaba **`CERRADA`** → pasa a **`ABIERTA` (`LED ON`)** y Nodo 1 notifica `OP_ALARM_SET(DESARMADA, RFID_C6_DIRECT)` al Maestro S3, quien reenvía al instante hacia Nodo 2 para **desarmar o silenciar** la alarma.
-   - Si la cerradura estaba **`ABIERTA`** → pasa a **`CERRADA` (`LED OFF`)** y Nodo 1 notifica `OP_ALARM_SET(ARMADA, RFID_C6_DIRECT)` al Maestro S3, quien reenvía al instante hacia Nodo 2 para **armar** la alarma.
+   - Si la cerradura estaba **`CERRADA`** → pasa a **`ABIERTA` (`LED ON`)** y Nodo 1 notifica `OP_ALARM_SET(DESARMADA, BLE_SRC_RFID_NODO1)` al Maestro S3, quien reenvía al instante hacia Nodo 2 para **desarmar o silenciar** la alarma.
+   - Si la cerradura estaba **`ABIERTA`** → pasa a **`CERRADA` (`LED OFF`)** y Nodo 1 notifica `OP_ALARM_SET(ARMADA, BLE_SRC_RFID_NODO1)` al Maestro S3, quien reenvía al instante hacia Nodo 2 para **armar** la alarma.
 2. **Desde Telegram (control granular independiente):**
    - `/cerradura abrir` y `/cerradura cerrar` actúan únicamente sobre el LED de cerradura del Nodo 1.
    - `/armar` y `/desarmar` actúan directamente sobre la alarma del Nodo 2.
@@ -129,5 +129,5 @@ El Nodo 3 realiza muestreo periódico no bloqueante cada **3 s** mediante perif�
    - `firmware/gateway_s3_uno/main/secrets.h` está excluido por [.gitignore](../../.gitignore) y usa una plantilla versionada `secrets.example.h` con `WIFI_PRIMARY_*`, `WIFI_BACKUP_*`, `TELEGRAM_BOT_TOKEN` y `TELEGRAM_AUTHORIZED_CHAT_ID`.
    - **Failover Wi-Fi automático:** si la red primaria falla al conectar o tras 3 reintentos (~15–20 s), el supervisor Wi-Fi del ESP32-S3 conmuta automáticamente a la red secundaria sin interrumpir los enlaces BLE GATT.
 2. **Conexión HTTPS persistente y colas priorizadas:**
-   - `task_tg_rx` mantiene *Long Polling* (`getUpdates?timeout=25`) con sesión TLS persistente (`keep-alive`).
+   - `task_tg_rx` mantiene *Long Polling* (`getUpdates` con `timeout=15`) con sesión TLS persistente (`keep-alive`).
    - `task_tg_tx` prioriza **`PRIO_URGENT`** (disparos de alarma, 3 fallos RFID, sobresaltos térmicos) por encima de **`PRIO_NORMAL`** (respuestas `/estado`, confirmaciones rutinarias).

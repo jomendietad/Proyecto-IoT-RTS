@@ -120,7 +120,7 @@ Dentro de cada proyecto en `firmware/<nombre_proyecto>/`:
 1. **Seleccionar chip objetivo** (solo la primera vez o tras `fullclean`):
    - Nodos 1, 2 y 3: `idf.py set-target esp32c6`
    - Gateway S3: `idf.py set-target esp32s3`
-2. **Configurar opciones** (PSRAM, BLE Mesh, credenciales, etc.):
+2. **Configurar opciones** (PSRAM, NimBLE GATT, coexistencia Wi-Fi + BLE, etc.):
    ```bash
    idf.py menuconfig
    ```

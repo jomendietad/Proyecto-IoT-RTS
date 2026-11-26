@@ -83,7 +83,7 @@ Todos los campos multibyte viajan en **little-endian** y están validados en com
 - **`OP_ALARM_SET` (3 bytes):**
   - `byte[0]`: `seq_num` (`uint8_t`)
   - `byte[1]`: `target_state` (`0 = DESARMADA`, `1 = ARMADA`)
-  - `byte[2]`: `source` (`1 = TELEGRAM`, `2 = RFID_C6_DIRECT`)
+  - `byte[2]`: `source` (`1 = TELEGRAM`, `2 = BLE_SRC_RFID_NODO1`)
 - **`OP_ALARM_EVENT` (9 bytes):**
   - `byte[0]`: `seq_num` (`uint8_t`)
   - `byte[1]`: `new_state` (`0 = DESARMADA`, `1 = ARMADA`, `2 = DISPARADA`)
