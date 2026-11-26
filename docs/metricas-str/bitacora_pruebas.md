@@ -232,3 +232,28 @@ Todos los experimentos fueron capturados directamente desde los puertos serie de
 - **Resiliencia offline y supervisión TWDT (`E6`):**
   - Con `WiFi=OFFLINE` (`failovers=2`), el Maestro S3 mantuvo **`BLE=3/3`** y completó `30/30` enrutamientos `N1 → S3 → N2` sin degradación (`uptime = 1,753 s`, `min_heap = 8,259,416 B` estable sin fugas; `N1 min_heap = 356,212 B`; `N2 min_heap = 366,168 B`; `N3 min_heap = 371,260 B`).
   - El **Task Watchdog Timer (`TWDT = 10 s`, `panic=on`)** permaneció activo en las 4 placas durante toda la jornada experimental (`~30 min` continuos) con `0` disparos inesperados y márgenes de stack libres ≥ 25 % en todas las tareas críticas (`task_alarm_fsm=3,180 B`, `task_rfid_poll=3,468 B`, `task_dht11_rmt=2,332 B`, `task_state_fsm_s3=1,552 B`, `task_tg_tx=4,332 B`, `task_tg_rx=4,340 B`, `task_wifi_sup=2,684 B`).
+
+---
+
+### Contraste de Hipótesis Experimentales (`H1–H5`)
+
+| ID | Hipótesis planteada | Evidencia experimental (`E1–E6`) | Veredicto |
+| :---: | :--- | :--- | :---: |
+| **H1** | La activación por interrupción (`xTaskNotifyFromISR`) y prioridades fijas en FreeRTOS mantiene el WCRT local de alarma muy por debajo de `D = 10 ms`. | En **E1** (`N=50`), `pir_to_led_us` registró media `33.6 µs`, `σ = 2.2 µs` y **WCRT = `40 µs`** (`250×` de holgura, `0` misses). | **Validada** |
+| **H2** | Aislar radio/coexistencia en **Core 0** y coordinación/TLS en **Core 1** sobre estrella BLE GATT evita degradación severa al operar Wi-Fi + HTTPS. | En **E3** (`N=30` por condición), `s3_route_n1_to_n2_us` pasó de `4,105 µs` (sin Wi-Fi) a `4,149 µs` (con Wi-Fi + Telegram): **`ΔWCRT = +1.1 %`**, `0` misses. | **Validada** |
+| **H3** | Existe una frontera clara entre el dominio local (**Firm RT**, determinista) y la nube (**Soft RT**, sujeta a latencia WAN y *rate-limiting*). | El 100 % de las métricas locales (`E1`, `E2`, `E3`, `E5`) cerró con `0` misses; en **E4**, Telegram tuvo `p50 = 665.6 ms` (fija) y `822.4 ms` (hotspot), pero ráfagas provocaron `HTTP 429` (`WCRT = 9,083.4 ms`). | **Validada** |
+| **H4** | Delegar el protocolo 1-wire del DHT11 al periférico hardware **RMT** evita bloqueos del planificador FreeRTOS y acota el *jitter* periódico. | En **E5** (`10 min`, `N=201`, `T=3,000 ms`), `dht11_jitter_us` fue **`518.0 ± 1.9 µs`** (`WCRT = 519 µs`, `~96×` bajo `D = 50 ms`, `0` misses). | **Validada** |
+| **H5** | La estrella BLE mantiene autonomía local total sin Internet y el failover dual Wi-Fi recupera la salida a nube sin soltar enlaces BLE. | En **E2/E6**, `30/30` rutas `N1→S3→N2` operaron con `WiFi=OFFLINE`; el failover `slot 0 ↔ slot 1` conservó `BLE=3/3` y memoria estable sin disparos TWDT. | **Validada** |
+
+---
+
+### Análisis Ampliado de Resultados
+
+1. **Márgenes de planificabilidad y dispersión (`p50` / `p95` / `p99` / `σ`):**
+   - La relación entre `p50` y `WCRT` en las rutas críticas locales es extremadamente cerrada: en **E1** (`33.0 µs` vs `40 µs`, `σ = 2.2 µs`), en **E2/E3** para acceso N1 (`125.0 µs` vs `138–144 µs`, `σ ≤ 8.6 µs`) y en **E5** (`519.0 µs` vs `519 µs`, `σ = 1.9 µs`). Esto demuestra ausencia de *priority inversion* y de bloqueos no acotados en las tareas **Firm RT**.
+   - En **E3**, la cola de enrutamiento `s3_route_n1_to_n2_us` presenta una desviación estándar mayor (`~909–1,001 µs`, rango `1.0–4.1 ms`) porque el tiempo de respuesta incluye el encolado hacia la tarea Host de NimBLE y la escritura GATT (`0xFF12`) alineada al intervalo de conexión BLE, manteniendo aun así `~24×` de margen respecto a `D = 100 ms`.
+2. **Efecto de optimizaciones en tiempo de ejecución (`task_wifi_sup` y `HTTP 429`):**
+   - Durante la validación inicial de Fase 4 se detectó que `task_wifi_sup` consumía `52 %` de CPU por un *busy-wait* sobre `WIFI_EVT_CONNECTED_BIT`; tras corregirlo, su consumo cayó a **`<1 %`** (`IDLE0 = 93%–96%`, `IDLE1 = 92%–98%`), confirmando la importancia de perfilar con `vTaskGetRunTimeStats()` en placa real.
+   - En **E4-A**, la ráfaga de 20 ciclos seguidos (~60 mensajes en ~2 min) activó el límite de tasa de Telegram (`HTTP 429`), elevando `p95` a `8.64 s`. Esto justifica la arquitectura implementada: cola `TG_PRIO_URGENT` separada de `TG_PRIO_NORMAL`, supresión de mensajes intermedios redundantes y desacoplamiento total respecto a la seguridad local (`N1 → S3 → N2`).
+3. **Gestión de memoria heterogénea (SRAM interna vs. Octal PSRAM):**
+   - Al alojar los buffers TLS/mbedTLS, HTTP (`16 KB` RX / `2.5 KB` TX) y parser JSON en **Octal PSRAM** (`8,058 KB` libres de `8,192 KB`), el Gateway S3 conservó `93 KB` de SRAM interna libre (`min = 38 KB`) y todos los stacks críticos con holgura ≥ 25 %.

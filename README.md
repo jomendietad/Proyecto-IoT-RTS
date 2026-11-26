@@ -165,3 +165,31 @@ Proyecto-IoT-RTS/
   - Validar flujo completo de alarma (incluidos 3 fallos RFID), alertas por sobresalto de temperatura, alta/baja remota de tarjetas en NVS y operación en estrella sin Internet.
 - [x] **Fase 6 — Mediciones de Tiempo Real (E1–E6) y documentación de resultados** *(Completada: herramienta `tools/analyze_str_metrics.py`, matriz `E1–E6` medida en hardware real y resultados consolidados en `docs/metricas-str/bitacora_pruebas.md`)*
   - Recolectar logs `[STR_METRIC]`, procesar percentiles/WCRT/jitter en `tools/`, registrar resultados de coexistencia en `docs/metricas-str/` y consolidar entregas de **IoT** y **STR**.
+
+---
+
+## 9. Enfoque Comercial: De Prototipo Académico a Producto Vendible
+
+La arquitectura desarrollada puede empaquetarse como un producto comercial bajo el concepto de **Sistema Modular de Seguridad, Acceso y Monitoreo Térmico Autónomo (Edge-First IoT)**.
+
+### Propuesta de valor
+> *"Control de acceso RFID, alarma inteligente y alerta térmica temprana en tiempo real desde Telegram, sin cuotas mensuales, sin depender de servidores externos y con operación local garantizada aunque se caiga el Internet."*
+
+### Segmentos objetivo
+- **Apartamentos, habitaciones en arriendo y hogares:** armado/desarmado tipo carro al entrar o salir con llavero RFID, sin llaves duplicables fácilmente y con alertas inmediatas al grupo familiar en Telegram.
+- **Consultorios, oficinas pequeñas y comercios:** gestión remota de acceso (`/rfid add|del`) para empleados temporales sin cambiar cerraduras ni pagar software en la nube.
+- **Cuartos técnicos, racks de servidores o bodegas:** detección de intrusión + detección temprana de fallas térmicas por gradiente (`|ΔT| >= 2.0 °C`) antes de que el equipo alcance temperaturas críticas.
+
+### Ventajas competitivas frente a soluciones comerciales típicas
+| Diferenciador | Soluciones Wi-Fi económicas (nube propietaria) | Este sistema (BLE GATT Estrella + Border Router) |
+| :--- | :--- | :--- |
+| **Autonomía sin Internet** | Muchas pierden automatizaciones o acceso remoto si cae la nube. | Enrutamiento local `Acceso → Gateway → Alarma` en **`< 5 ms`** sin Wi-Fi ni Internet. |
+| **Costos recurrentes / App** | Apps cerradas, dependencia de servidores externos o suscripciones. | Interfaz nativa en **Telegram** (`/panel` interactivo) sin servidor intermedio ni mensualidades. |
+| **Resiliencia de enlace** | Un solo Wi-Fi; si falla el router queda incomunicado. | **Failover dual automático** (Wi-Fi principal + respaldo móvil/4G). |
+| **Alerta térmica inteligente** | Solo umbral fijo simple. | **Sobresalto brusco (`|ΔT| >= 2 °C`) + umbral dinámico con histéresis (`1 °C`)**. |
+
+### Hoja de ruta de industrialización (para llevarlo a venta)
+1. **Hardware y encapsulado:** diseñar PCBs compactas (reemplazando protoboards), gabinetes impresos en 3D o riel DIN, y etapa de potencia optoacoplada/MOSFET para accionar cerradura solenoide/electroimán real y sirena acústica.
+2. **Provisionamiento sin código (UX cliente final):** reemplazar `secrets.h` por un portal cautivo inicial (SoftAP web o *BLE Provisioning*) para que el usuario ingrese su Wi-Fi, token y grupo desde el celular en 2 minutos.
+3. **Seguridad y mantenimiento en campo:** habilitar cifrado/emparejamiento BLE (*NimBLE Bonding AES-CCM*) y actualizaciones **OTA** firmadas sobre HTTPS.
+4. **Respaldo eléctrico (UPS 5V):** integrar batería Li-Ion con cargador y conmutación automática para operar durante cortes de energía eléctrica.
