@@ -163,7 +163,7 @@ Proyecto-IoT-RTS/
   - Crear proyecto `gateway_s3_uno` como Central/Maestro BLE GATT, añadir servicio GATT (`0xFF10`) en las 3 C6, validar reconexión automática y enrutamiento local N1 → S3 → N2.
 - [x] **Fase 4 — Coexistencia Wi-Fi + BLE y Bot de Telegram en el ESP32-S3** *(Completada: Octal PSRAM, `esp_coex`, failover dual Wi-Fi y Bot de Telegram `/panel` validados en placa)*
   - Configurar Octal PSRAM (`N16R8`), `esp_coex`, *Core Pinning* (Core 0/Core 1), failover dual Wi-Fi (`secrets.h`), *Long Polling* HTTPS (`keep-alive`), comandos de texto y `/panel` *Inline Keyboard*.
-- [ ] **Fase 5 — Lógica integral, gestión `/rfid` y pruebas en modo offline/degradado**
+- [x] **Fase 5 — Lógica integral, gestión `/rfid` y pruebas en modo offline/degradado** *(Completada: flujo integral, `/rfid` NVS, `/umbral`, sobresalto térmico, failover dual y reconexión `3/3` validados en placa)*
   - Validar flujo completo de alarma (incluidos 3 fallos RFID), alertas por sobresalto de temperatura, alta/baja remota de tarjetas en NVS y operación en estrella sin Internet.
 - [ ] **Fase 6 — Mediciones de Tiempo Real (E1–E6) y documentación de resultados**
   - Recolectar logs `[STR_METRIC]`, procesar percentiles/WCRT/jitter en `tools/`, registrar resultados de coexistencia en `docs/metricas-str/` y consolidar entregas de **IoT** y **STR**.

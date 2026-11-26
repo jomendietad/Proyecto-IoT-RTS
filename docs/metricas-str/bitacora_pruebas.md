@@ -15,6 +15,7 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 | **Fase 2 — Nodo 3 (`nodo3_clima_c6`)** | `ESP32-C6 SuperMini` + `DHT11` | **Validado en hardware** | Compilación + corrida inicial `186 s` + corrida post-fix `75 s` sin errores |
 | **Fase 3 — Red BLE GATT en Estrella** | `3× ESP32-C6` + `ESP32-S3 N16R8 UNO` | **Validado en hardware** | Corrida continua `1782 s` (~30 min), reconexión `3/3` y ruta `N1→S3→N2` |
 | **Fase 4 — Coexistencia + Telegram** | `ESP32-S3 N16R8 UNO` + `3× ESP32-C6` | **Validado en hardware** | Octal PSRAM, `esp_coex`, failover dual Wi-Fi (`slot 0 ↔ slot 1`), `/panel` y comandos Telegram |
+| **Fase 5 — Integral, `/rfid` y Offline** | Sistema completo (`3× C6 + S3 + Telegram`) | **Validado en hardware** | Flujo completo, 3 fallos RFID, `/rfid` NVS, `/umbral`, sobresalto térmico, failover y reconexión `3/3` |
 
 ---
 
@@ -174,7 +175,38 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 
 ---
 
-## Próximas Entradas (Fases 5 y 6)
+## Fase 5 — Validación Integral, Gestión Remota `/rfid` y Resiliencia (`21:11` – `22:21`)
 
-- **Fase 5:** validación integral de lógica, gestión remota `/rfid` y pruebas en modo offline/degradado.
-- **Fase 6:** resultados consolidados de la matriz experimental `E1–E6` con scripts en `tools/`.
+- **Sistema completo probado:** `ESP32-S3 N16R8 UNO` + `3× ESP32-C6` (`IOT-N1-ACCESO`, `IOT-N2-SEGURIDAD`, `IOT-N3-CLIMA`) + grupo autorizado de Telegram.
+
+#### Resultados funcionales verificados en sesión continua
+- **Acoplamiento estilo carro (`N1 → S3 → N2`) y control bidireccional:**
+  - Tarjeta autorizada (`B6:7B:0C:03`) alternó `ABIERTA ↔ CERRADA` en N1 y `DESARMADA ↔ ARMADA` en N2, incluyendo silenciado directo desde `DISPARADA`.
+  - Comandos de texto (`/panel`, `/estado`, `/red`, `/metricas`, `/armar`, `/desarmar`, `/cerradura abrir|cerrar`, `/umbral`, `/rfid`) y botones *Inline Keyboard* ejecutados con confirmación en Telegram.
+- **Disparos de alarma verificados:**
+  - **PIR (`N2`):** múltiples disparos reportados a Telegram con latencia local medida en **`19 µs – 24 µs`** (`D = 10,000 µs`).
+  - **3 intentos RFID consecutivos no autorizados:** disparos verificados tanto con NFC móvil (`08:2A:5A:1A`, `08:F1:B2:B7`, `08:C0:99:63`) como tras revocar el llavero (`9A:A5:AE:02`), activando `ALARMA DISPARADA (3/3)`.
+- **Gestión dinámica `/rfid` en NVS del Nodo 1 desde Telegram:**
+  - `/rfid list` → `1/8 tarjetas (B6:7B:0C:03)`.
+  - `/rfid add 9A:A5:AE:02` → `2/8 tarjetas`; el llavero pasó inmediatamente a abrir/cerrar cerradura y armar/desarmar alarma.
+  - `/rfid del 9A:A5:AE:02` → `1/8 tarjetas`; el llavero volvió a ser rechazado de inmediato y disparó alarma al 3.er intento.
+- **Alertas térmicas y umbral dinámico (`/umbral`, Nodo 3):**
+  - `/umbral 28` → detección combinada `UMBRAL_Y_SOBRESALTO` (`T=29.3 °C`, `dT=+2.9 °C`, `H=95%`, `Umbral=28 °C`).
+  - `/umbral 35` → retorno por histéresis a `Temperatura normalizada` (`T=29.5 °C`, `dT=-0.3 °C`, `H=95%`, `Umbral=35 °C`).
+- **Resiliencia de red y reconexión:**
+  - Failover Wi-Fi ida y vuelta (`slot 0 → slot 1 POCO X4 GT IP 10.213.237.133 → slot 0 IP 192.168.1.12`, `Failovers: 2`) manteniendo **`BLE=3/3`**.
+  - Desconexión y reconexión individual en caliente de `N3`, `N1` y `N2` (`DESCONECTADO (2/3 BLE)` → `ONLINE (3/3 BLE)`) con notificación al grupo.
+
+#### Instantánea de `/metricas` consolidada en vivo desde Telegram
+| Nodo | `max_lat` | `avg_jit` | `misses` | `min_stack` | Memoria libre |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **Gateway S3** | `0 us` | `0 us` | **`0`** | `1,660 B` | SRAM `93 KB` (`min=38 KB`) / PSRAM `8,058 KB / 8,192 KB` |
+| **Nodo 1 (Acceso)** | `0 us` | `0 us` | **`0`** | `2,188 B` | Heap `352–353 KB` |
+| **Nodo 2 (Seguridad)** | `19–24 us` (PIR) | `0 us` | **`0`** | `2,208 B` | Heap `359 KB` |
+| **Nodo 3 (Clima)** | — | `202 us` | **`0`** | `2,148 B` | Heap `364 KB` |
+
+---
+
+## Próximas Entradas (Fase 6)
+
+- **Fase 6:** resultados consolidados de la matriz experimental `E1–E6` con scripts de análisis en `tools/`.
