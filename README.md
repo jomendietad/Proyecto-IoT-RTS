@@ -159,7 +159,7 @@ Proyecto-IoT-RTS/
   - Definición de hardware (`2× C6-DevKitC-1`, `C6 SuperMini`, `S3 N16R8 UNO`), protocolo binario, FSMs, interfaz Telegram `/panel` y tablas formales STR documentadas en `docs/`.
 - [x] **Fase 2 — Drivers y pruebas unitarias FreeRTOS en las 3 ESP32-C6** *(Completada: los 3 nodos validados en placa)*
   - Componentes `common_types` + `ble_protocol` y firmwares standalone para Nodo 1 (RC522 + NVS + cerradura), Nodo 2 (PIR + alarma) y Nodo 3 (DHT11 RMT + monitor de sobresalto térmico).
-- [ ] **Fase 3 — Red BLE GATT en estrella (NimBLE: 1 Maestro S3 ↔ 3 Periféricos C6)**
+- [x] **Fase 3 — Red BLE GATT en estrella (NimBLE: 1 Maestro S3 ↔ 3 Periféricos C6)** *(Completada: estrella 3/3, reconexión automática y ruta offline N1→S3→N2 validados en 4 placas)*
   - Crear proyecto `gateway_s3_uno` como Central/Maestro BLE GATT, añadir servicio GATT (`0xFF10`) en las 3 C6, validar reconexión automática y enrutamiento local N1 → S3 → N2.
 - [ ] **Fase 4 — Coexistencia Wi-Fi + BLE y Bot de Telegram en el ESP32-S3**
   - Configurar Octal PSRAM (`N16R8`), `esp_coex`, *Core Pinning* (Core 0/Core 1), failover dual Wi-Fi (`secrets.h`), *Long Polling* HTTPS (`keep-alive`), comandos de texto y `/panel` *Inline Keyboard*.
