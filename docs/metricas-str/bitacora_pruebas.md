@@ -14,7 +14,7 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 | **Fase 2 — Nodo 1 (`nodo1_acceso_c6`)** | `ESP32-C6-DevKitC-1` + `RFID-RC522` | **Validado en hardware** | Compilación + pruebas SPI, NVS y `BOOT` |
 | **Fase 2 — Nodo 3 (`nodo3_clima_c6`)** | `ESP32-C6 SuperMini` + `DHT11` | **Validado en hardware** | Compilación + corrida inicial `186 s` + corrida post-fix `75 s` sin errores |
 | **Fase 3 — Red BLE GATT en Estrella** | `3× ESP32-C6` + `ESP32-S3 N16R8 UNO` | **Validado en hardware** | Corrida continua `1782 s` (~30 min), reconexión `3/3` y ruta `N1→S3→N2` |
-| **Fase 4 — Coexistencia + Telegram** | `ESP32-S3 N16R8 UNO` | Pendiente | — |
+| **Fase 4 — Coexistencia + Telegram** | `ESP32-S3 N16R8 UNO` + `3× ESP32-C6` | **Validado en hardware** | Octal PSRAM, `esp_coex`, failover dual Wi-Fi (`slot 0 ↔ slot 1`), `/panel` y comandos Telegram |
 
 ---
 
@@ -146,7 +146,35 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 
 ---
 
-## Próximas Entradas (Fases 4 a 6)
+## Fase 4 — Coexistencia Wi-Fi + BLE GATT, Failover Dual y Bot de Telegram (`gateway_s3_uno`)
 
-- **Fase 4–5:** métricas de coexistencia Wi-Fi + BLE GATT en ESP32-S3, tiempos de Telegram y prueba *offline*.
-- **Fase 6:** resultados consolidados de la matriz experimental `E1–E6`.
+- **Hardware y memoria probados:** `ESP32-S3 N16R8 UNO` (`16 MB Flash`, `8 MB Octal PSRAM` a `80 MHz`, `ESP-IDF v6.1.1`, tabla `SINGLE_APP_LARGE`, binario `0x137fc0` B) en coexistencia simultánea `esp_coex` (**Core 0**: NimBLE Central + Wi-Fi + LwIP; **Core 1**: FSM + `wifi_mgr` + Telegram HTTPS).
+- **Redes probadas:** primaria (`slot 0`, `Familia_Mendieta_Dilbert.`, IP `192.168.1.12`) + respaldo hotspot móvil (`slot 1`, `POCO X4 GT`, WPA2-PSK, IP `10.213.237.133`, `RSSI=-48 dBm`).
+
+#### Incidencias detectadas y corregidas durante la validación
+1. **Fallo de failover hacia AP WPA2 puro (`reason=201` `NO_AP_FOUND`):** `wcfg.sta.threshold.authmode = WIFI_AUTH_WPA_WPA2_PSK` (enum `4`) descartaba redes `WIFI_AUTH_WPA2_PSK` (enum `3`). Se corrigió a `WIFI_AUTH_WPA_PSK` (enum `2`) con `WIFI_ALL_CHANNEL_SCAN` y supresión de evento `reason=8` durante conmutación forzada.
+2. **Consumo de CPU en `task_wifi_sup` (`52 %`) y `wifi` (`30 %`):** `xEventGroupWaitBits` incluía `WIFI_EVT_CONNECTED_BIT` con `xClearOnExit=pdFALSE`, provocando *busy-wait* al estar conectado. Tras retirarlo, `task_wifi_sup` bajó a **`<1 %`** y `wifi` a **`2 %`**.
+3. **Optimización de respuesta Telegram y métrica `tg_alert_e2e_us`:** se eliminaron mensajes intermedios redundantes en `/armar`, `/desarmar` y `/cerradura`, se ajustó `getUpdates` a `timeout=15` y se restringió el conteo de `tg_alert_e2e_us` a alertas encoladas con Wi-Fi activo (evitando falsos *deadline misses* offline).
+
+#### Resultados funcionales verificados
+- **Bot de Telegram completo:** ejecución verificada de todos los comandos de texto (`/panel`, `/estado`, `/armar`, `/desarmar`, `/cerradura`, `/umbral`, `/rfid`, `/red`, `/metricas`), *Inline Keyboard* y recepción de notificaciones desde los 3 nodos C6.
+- **Failover Wi-Fi en vivo (`slot 0 → slot 1`):** conmutación exitosa al primer intento hacia `POCO X4 GT` (`WPA2-PSK`, canal `1`) manteniendo **`BLE=3/3`** sin desconexiones.
+
+#### Métricas STR y estabilidad observadas tras correcciones
+| Métrica | Valor observado | Referencia | Resultado |
+| :--- | :--- | :--- | :--- |
+| Uso de CPU Dual-Core (`IDLE0` / `IDLE1`) | **`93% – 94%` / `92% – 94%`** | — | **Holgado** |
+| CPU `task_wifi_sup` / `wifi` / `task_tg_tx` / `task_tg_rx` | `<1%` / `2%` / `1%–2%` / `1%–2%` | — | **OK** |
+| Heap total libre (`free_heap` / `min_heap` incl. PSRAM) | `8,347,631 B – 8,400,475 B` / `8,261,104 B` | Estable | **Sin fugas** |
+| Deadline misses (`misses`) | **`0`** | `D_urgent = 3,000 ms` | **OK** |
+| Stack libre mínimo (`task_state_fsm_s3`) | `2,064 B` (de `4,096 B`) | ≥ 25 % libre | **OK** |
+| Stack libre mínimo (`task_tg_tx` / `task_tg_rx`) | `4,460 B` / `4,340 B` (de `8,192 B`) | ≥ 25 % libre | **OK** |
+| Stack libre mínimo (`task_wifi_sup`) | `2,684 B` (de `4,096 B`) | ≥ 25 % libre | **OK** |
+| Stack libre mínimo (`task_hb_s3` / `task_console_s3`) | `1,828 B` / `2,248 B` | ≥ 25 % libre | **OK** |
+
+---
+
+## Próximas Entradas (Fases 5 y 6)
+
+- **Fase 5:** validación integral de lógica, gestión remota `/rfid` y pruebas en modo offline/degradado.
+- **Fase 6:** resultados consolidados de la matriz experimental `E1–E6` con scripts en `tools/`.

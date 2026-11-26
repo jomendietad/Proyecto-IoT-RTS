@@ -161,7 +161,7 @@ Proyecto-IoT-RTS/
   - Componentes `common_types` + `ble_protocol` y firmwares standalone para Nodo 1 (RC522 + NVS + cerradura), Nodo 2 (PIR + alarma) y Nodo 3 (DHT11 RMT + monitor de sobresalto térmico).
 - [x] **Fase 3 — Red BLE GATT en estrella (NimBLE: 1 Maestro S3 ↔ 3 Periféricos C6)** *(Completada: estrella 3/3, reconexión automática y ruta offline N1→S3→N2 validados en 4 placas)*
   - Crear proyecto `gateway_s3_uno` como Central/Maestro BLE GATT, añadir servicio GATT (`0xFF10`) en las 3 C6, validar reconexión automática y enrutamiento local N1 → S3 → N2.
-- [ ] **Fase 4 — Coexistencia Wi-Fi + BLE y Bot de Telegram en el ESP32-S3**
+- [x] **Fase 4 — Coexistencia Wi-Fi + BLE y Bot de Telegram en el ESP32-S3** *(Completada: Octal PSRAM, `esp_coex`, failover dual Wi-Fi y Bot de Telegram `/panel` validados en placa)*
   - Configurar Octal PSRAM (`N16R8`), `esp_coex`, *Core Pinning* (Core 0/Core 1), failover dual Wi-Fi (`secrets.h`), *Long Polling* HTTPS (`keep-alive`), comandos de texto y `/panel` *Inline Keyboard*.
 - [ ] **Fase 5 — Lógica integral, gestión `/rfid` y pruebas en modo offline/degradado**
   - Validar flujo completo de alarma (incluidos 3 fallos RFID), alertas por sobresalto de temperatura, alta/baja remota de tarjetas en NVS y operación en estrella sin Internet.
