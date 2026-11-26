@@ -6,14 +6,14 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 
 ## Resumen de Estado por Nodo y Fase
 
-> **Fase 2 — Completada:** los 3 nodos `ESP32-C6` (`nodo1_acceso_c6`, `nodo2_seguridad_c6` y `nodo3_clima_c6`) quedaron validados en hardware real con métricas STR dentro de deadline (`misses=0`).
+> **Fases 2 y 3 — Completadas:** los 3 nodos `ESP32-C6` individuales y la red **BLE GATT en estrella** (`ESP32-S3` Maestro ↔ `3× ESP32-C6` Periféricos) quedaron validados en hardware real con métricas STR dentro de deadline (`misses=0`).
 
 | Componente / Fase | Placa / Hardware | Estado | Última verificación |
 | :--- | :--- | :--- | :--- |
 | **Fase 2 — Nodo 2 (`nodo2_seguridad_c6`)** | `ESP32-C6-DevKitC-1` + PIR `HC-SR501` | **Validado en hardware** | Compilación + corrida continua `1022 s` |
 | **Fase 2 — Nodo 1 (`nodo1_acceso_c6`)** | `ESP32-C6-DevKitC-1` + `RFID-RC522` | **Validado en hardware** | Compilación + pruebas SPI, NVS y `BOOT` |
 | **Fase 2 — Nodo 3 (`nodo3_clima_c6`)** | `ESP32-C6 SuperMini` + `DHT11` | **Validado en hardware** | Compilación + corrida inicial `186 s` + corrida post-fix `75 s` sin errores |
-| **Fase 3 — Red BLE GATT en Estrella** | `3× ESP32-C6` + `ESP32-S3 N16R8 UNO` | Pendiente | — |
+| **Fase 3 — Red BLE GATT en Estrella** | `3× ESP32-C6` + `ESP32-S3 N16R8 UNO` | **Validado en hardware** | Corrida continua `1782 s` (~30 min), reconexión `3/3` y ruta `N1→S3→N2` |
 | **Fase 4 — Coexistencia + Telegram** | `ESP32-S3 N16R8 UNO` | Pendiente | — |
 
 ---
@@ -117,8 +117,36 @@ Registro cronológico de validaciones en hardware real, mediciones de Sistemas e
 
 ---
 
-## Próximas Entradas (Fases 3 a 6)
+## Fase 3 — Red BLE GATT en Estrella (`gateway_s3_uno` ↔ `3× ESP32-C6`)
 
-- **Fase 3:** registro de conexiones BLE GATT en estrella (`IOT-S3-MAESTRO` ↔ `IOT-N1-ACCESO`, `IOT-N2-SEGURIDAD`, `IOT-N3-CLIMA`), reconexión automática y enrutamiento local `N1 → S3 → N2`.
+- **Hardware probado:** `ESP32-S3 N16R8 UNO` (`rev v0.2`, `240 MHz`, `8 MB PSRAM`, `ESP-IDF v6.1.1`) actuando como Maestro/Central en **Core 0** + Coordinador en **Core 1**, conectado simultáneamente por BLE GATT (`0xFF10`) a `IOT-N1-ACCESO`, `IOT-N2-SEGURIDAD` e `IOT-N3-CLIMA`.
+- **Duración de corrida continua observada:** **`1,782 s`** (~30 minutos continuos sin reinicios, fugas de heap ni disparos del TWDT).
+
+#### Resultados funcionales verificados
+- **Conexión simultánea `3/3` y descubrimiento GATT automático:** enlace con `IOT-N3-CLIMA` (`RSSI=-43 dBm`), `IOT-N2-SEGURIDAD` (`RSSI=-60 dBm`) e `IOT-N1-ACCESO` (`RSSI=-62 dBm`), negociación `MTU=128` y suscripción automática CCCD a `0xFF11`.
+- **Reconexión automática tras desconexión (`reason=0x208`):** al caer los enlaces (`3/3 → 2/3 → 1/3 → 0/3`), el Maestro S3 reanudó el escaneo y restableció automáticamente la estrella completa (`3/3`) sin intervención manual.
+- **Enrutamiento offline estilo carro (`N1 → S3 → N2`):**
+  - Tarjeta autorizada (`B6:7B:0C:03`): alternó `CERRADA ↔ ABIERTA` en N1 y enrutó `OP_ALARM_SET(ARMADA/DESARMADA)` hacia N2, incluyendo el silenciado inmediato desde `DISPARADA` (`reason=1`, `fail=0/3`).
+  - Credenciales no autorizadas (llavero `9A:A5:AE:02` y NFC móvil `08:...`): enrutamiento de `OP_RFID_AUTH_FAIL` hacia N2 con conteo `fail=1/3`, `fail=2/3` y disparo automático en el 3.er intento (`DISPARADA reason=4 fail=3/3`).
+- **Disparo PIR sobre red en estrella:** detecciones físicas en N2 notificadas al instante a la S3 (`N2 ALARMA=DISPARADA reason=3 lat_local=16–21 us`).
+- **Telemetría térmica de N3 por BLE:** recepción de transiciones `[SOBRESALTO]` (`T=29.0 °C`, `dT=+2.9 °C`), `[UMBRAL_Y_SOBRESALTO]` (`T=31.7 °C`, `dT=+2.7 °C`), `[UMBRAL_ALTO]` (`T=32.8 °C`) y retorno por histéresis a `[NORMAL]` (`T=28.9 °C`).
+- **Consola S3 (`status` / `ESTADO GLOBAL`):** consulta consolidada verificada (`Cerradura=ABIERTA | Alarma=DESARMADA | Clima=OK ... | BLE=3/3`).
+
+#### Métricas STR y estabilidad observadas en Maestro S3 (`1,782 s`)
+| Métrica | Valor observado | Límite / Referencia | Resultado |
+| :--- | :--- | :--- | :--- |
+| Latencia de enrutamiento `s3_route_n1_to_n2_us` (`OP_RFID_AUTH_FAIL`) | **`1,115 µs – 1,185 µs`** | `D = 100,000 µs` (100 ms) | **OK (`misses=0`)** |
+| Latencia de enrutamiento `s3_route_n1_to_n2_us` (`OP_ALARM_SET`) | **`3,289 µs – 4,741 µs`** (`max_lat_us=4,741`) | `D = 100,000 µs` (100 ms) | **OK (`misses=0`)** |
+| Latencia local PIR reportada por N2 (`lat_local`) | **`16 µs – 21 µs`** | `D = 10,000 µs` (10 ms) | **OK (`misses=0`)** |
+| Heap libre en S3 (`free_heap` / `min_heap`) | `264,108 B` / `260,388 B` | Estable en `1,776 s` | **Sin fugas** |
+| Uso de CPU Dual-Core (`IDLE0` / `IDLE1`) | **`99%` / `99%`** | — | **Holgado** |
+| Stack libre mínimo (`task_state_fsm_s3`) | `2,240 B` (de `4,096 B`) | ≥ 25 % libre | **OK** |
+| Stack libre mínimo (`task_hb_s3`) | `1,620 B` (de `3,072 B`) | ≥ 25 % libre | **OK** |
+| Stack libre mínimo (`task_console_s3`) | `2,108 B` (de `4,096 B`) | ≥ 25 % libre | **OK** |
+
+---
+
+## Próximas Entradas (Fases 4 a 6)
+
 - **Fase 4–5:** métricas de coexistencia Wi-Fi + BLE GATT en ESP32-S3, tiempos de Telegram y prueba *offline*.
 - **Fase 6:** resultados consolidados de la matriz experimental `E1–E6`.
